@@ -83,6 +83,7 @@ class Controller(torch.nn.Module):
     def __init__(self, args):
         torch.nn.Module.__init__(self)
         self.args = args
+        self.run_fwd_once = False
 
         if self.args.network_type == 'rnn':
             # NOTE(brendan): `num_tokens` here is just the activation function
@@ -102,6 +103,8 @@ class Controller(torch.nn.Module):
         self.encoder = torch.nn.Embedding(num_total_tokens,
                                           args.controller_hid)
         self.lstm = torch.nn.LSTMCell(args.controller_hid, args.controller_hid)
+        if self.args.cuda:
+            self.lstm = self.lstm.cuda()
 
         # TODO(brendan): Perhaps these weights in the decoder should be
         # shared? At least for the activation functions, which all have the
@@ -141,7 +144,16 @@ class Controller(torch.nn.Module):
         else:
             embed = inputs
 
-        hx, cx = self.lstm(embed, hidden)
+        if self.args.prof_ctrl_fwd and not self.run_fwd_once:
+            with torch.autograd.profiler.profile(use_cuda=True) as prof:
+                hx, cx = self.lstm(embed, hidden)
+            print("-"*64)
+            print("Profile Controller Forward LSTM eval: ---------------------------")
+            print(prof)
+            print("-"*64)
+            self.run_fwd_once = True
+        else:
+            hx, cx = self.lstm(embed, hidden)
         logits = self.decoders[block_idx](hx)
 
         logits /= self.args.softmax_temperature
@@ -185,7 +197,7 @@ class Controller(torch.nn.Module):
 
             action = probs.multinomial(num_samples=1).data
             selected_log_prob = log_prob.gather(
-                1, utils.get_variable(action, requires_grad=False))
+                1, utils.get_variable(action, cuda=self.args.cuda, requires_grad=False))
 
             # TODO(brendan): why the [:, 0] here? Should it be .squeeze(), or
             # .view()? Same below with `action`.
@@ -196,6 +208,7 @@ class Controller(torch.nn.Module):
             mode = block_idx % 2
             inputs = utils.get_variable(
                 action[:, 0] + sum(self.num_tokens[:mode]),
+                cuda=self.args.cuda,
                 requires_grad=False)
 
             if mode == 0:

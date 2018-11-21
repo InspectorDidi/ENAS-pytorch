@@ -116,6 +116,11 @@ class Trainer(object):
             - Inference: optimizers for shared and controller parameters.
             - Criticism: cross-entropy loss for training the shared model.
         """
+        self.run_shared_fwd_once = False
+        self.run_ctrl_fwd_once = False
+        self.run_ctrl_bp_once = False
+        self.run_shared_bp_once = False
+        self.run_sample_once = False
         self.args = args
         self.controller_step = 0
         self.cuda = args.cuda
@@ -241,7 +246,17 @@ class Trainer(object):
 
         loss = 0
         for dag in dags:
-            output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)
+            if self.args.prof_shared_fwd and not self.run_shared_fwd_once:
+                with torch.autograd.profiler.profile() as prof:
+                    output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)
+                print("-"*64)
+                print("Profile Shared Forward")
+                print(prof)
+                print("-"*64)
+                self.run_shared_fwd_once = True
+            else:
+                output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)
+
             output_flat = output.view(-1, self.dataset.num_tokens)
             sample_loss = (self.ce(output_flat, targets) /
                            self.args.shared_num_sample)
@@ -263,6 +278,7 @@ class Trainer(object):
         from the fixed controller policy, and averaging their gradients
         computed on a batch of training data.
         """
+        run_once = False
         model = self.shared
         model.train()
         self.controller.eval()
@@ -285,7 +301,17 @@ class Trainer(object):
             if step > max_step:
                 break
 
-            dags = self.controller.sample(self.args.shared_num_sample)
+            if self.args.prof_sample and (not self.run_sample_once and train_idx > 5):
+                with torch.autograd.profiler.profile() as prof:
+                   dags = self.controller.sample(self.args.shared_num_sample)
+                print("-"*64)
+                print("Profile Controller Sample")
+                print(prof)
+                print("-"*64)
+                self.run_sample_once = True
+            else:
+                dags = self.controller.sample(self.args.shared_num_sample)
+               
             inputs, targets = self.get_batch(self.train_data,
                                              train_idx,
                                              self.max_length)
@@ -301,7 +327,17 @@ class Trainer(object):
 
             # update
             self.shared_optim.zero_grad()
-            loss.backward()
+
+            if self.args.prof_shared_bp and (not self.run_shared_bp_once and train_idx > 5):
+                with torch.autograd.profiler.profile(use_cuda=True) as prof:
+                    loss.backward()
+                print("-"*64)
+                print("Profile Shared Back prop: ")
+                print(prof)
+                print("-"*64)
+                self.run_shared_bp_once = True
+            else:
+                loss.backward()
 
             h1tohT = extra_out['hiddens']
             new_abs_max_hidden_norm = utils.to_item(
@@ -387,6 +423,7 @@ class Trainer(object):
         hidden = self.shared.init_hidden(self.args.batch_size)
         total_loss = 0
         valid_idx = 0
+        run_once = False
         for step in range(self.args.controller_max_step):
             # sample models
             dags, log_probs, entropies = self.controller.sample(
@@ -430,7 +467,17 @@ class Trainer(object):
 
             # update
             self.controller_optim.zero_grad()
-            loss.backward()
+
+            if self.args.prof_ctrl_bp and (not self.run_ctrl_bp_once and step > 5):
+                with torch.autograd.profiler.profile(use_cuda=True) as prof:
+                    loss.backward()
+                print("-"*64)
+                print("Profile Controller Back prop: ---------------------------")
+                print(prof)
+                print("-"*64)
+                self.run_ctrl_bp_once = True
+            else:
+                loss.backward()
 
             if self.args.controller_grad_clip > 0:
                 torch.nn.utils.clip_grad_norm(model.parameters(),

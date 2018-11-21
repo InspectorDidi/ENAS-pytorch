@@ -19,6 +19,13 @@ def add_argument_group(name):
 net_arg = add_argument_group('Network')
 net_arg.add_argument('--network_type', type=str, choices=['rnn', 'cnn'], default='rnn')
 
+#Profiling
+net_arg.add_argument('--prof_ctrl_bp', type=str2bool, default=False)
+net_arg.add_argument('--prof_shared_bp', type=str2bool, default=False)
+net_arg.add_argument('--prof_ctrl_fwd', type=str2bool, default=False)
+net_arg.add_argument('--prof_shared_fwd', type=str2bool, default=False)
+net_arg.add_argument('--prof_sample', type=str2bool, default=False)
+
 # Controller
 net_arg.add_argument('--num_blocks', type=int, default=12)
 net_arg.add_argument('--tie_weights', type=str2bool, default=True)

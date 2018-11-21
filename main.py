@@ -7,12 +7,15 @@ import data
 import config
 import utils
 import trainer
+import sys
 
 logger = utils.get_logger()
 
 
 def main(args):  # pylint:disable=redefined-outer-name
     """main: Entry point."""
+    print(sys.argv)
+    print("-"*64)
     utils.prepare_dirs(args)
 
     torch.manual_seed(args.random_seed)
@@ -27,6 +30,8 @@ def main(args):  # pylint:disable=redefined-outer-name
     else:
         raise NotImplementedError(f"{args.dataset} is not supported")
 
+    #with torch.cuda.profiler.profile():
+    #    with torch.autograd.profiler.emit_nvtx():
     trnr = trainer.Trainer(args, dataset)
 
     if args.mode == 'train':
