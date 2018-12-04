@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+##############################################################
+# run_prof.py
+# run profiling - for use only with the profiling branch
+##############################################################
 import os
 from subprocess import Popen, PIPE
 import re
@@ -11,6 +16,7 @@ OUTDIR = "profiles"
 if not os.path.exists(OUTDIR):
     os.makedirs(OUTDIR)
 
+#TODO add argument parsing
 
 if len(sys.argv) > 1:
     filenm = sys.argv[1]
@@ -19,6 +25,7 @@ if len(sys.argv) > 1:
 def process_profs(outstr,filenm):
     outstr = outstr.decode('utf-8')
     non_decimal = re.compile(r'[^\d.]+')
+#TODO track number of calls of each function as well
     functions = {}
     out_filenm = f"./profiles/{filenm}"
     print(f"Writing to: {out_filenm}")
@@ -47,8 +54,9 @@ def process_profs(outstr,filenm):
             if funcname in functions:
                 functions[funcname][0] += cputime
                 functions[funcname][1] += cudatime
+                functions[funcname][2] += 1
             else:
-                functions[funcname] = [0.0,0.0]
+                functions[funcname] = [0.0, 0.0, 0]
 
     allcpu = 0.0
     allgpu = 0.0
@@ -66,13 +74,16 @@ def process_profs(outstr,filenm):
     print("-"*64, file=out_file)
 
     for func, value in sorted(functions.items(), key=lambda x: x[1][0]):
-        print(f'{func:{longest_func_name}}: CPU time {value[0]:.2f}', file=out_file)
+        print(f'{func:{longest_func_name}}: CPU time {value[0]:.2f} calls: {value[2]}', file=out_file)
     print(file=out_file)
     print("-"*64,file=out_file)
     print("Sorted by GPU time",file=out_file)
     print("-"*64,file=out_file)
     for func, value in sorted(functions.items(), key=lambda x: x[1][1]):
-        print(f"{func:{longest_func_name}}: GPU time: {value[1]:.2f}",file=out_file)
+        if value[1] > 0.0:
+           print(f"{func:{longest_func_name}}: GPU time: {value[1]:.2f} calls: {value[2]}",file=out_file)
+        else:
+           print(f"{func:{longest_func_name}}: GPU time: {value[1]:.2f}",file=out_file)
 
     print("-"*64,file=out_file)
     print(f'CPU total: {allcpu}',file=out_file)
@@ -115,8 +126,11 @@ for prof_arg in prof_args:
     process = Popen(command, stdout=PIPE, stderr=PIPE)
 #    process = Popen(command)
     (output, err) = process.communicate()
-    print(f"type(output) is {type(output)}")
     exit_code = process.wait()
-    print(output)
-    print(err)
+    with open(f"{prof_arg}_raw.txt","w") as rawfile:
+        rawfile.write(output.decode('utf-8'))
+        #print(output,file=rawfile)
+        print("="*64,file=rawfile)
+        #print(err,file=rawfile)
+        rawfile.write(err.decode('utf-8'))
     process_profs(output, f"{prof_arg}.txt")    

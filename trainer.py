@@ -6,7 +6,7 @@ import os
 
 import numpy as np
 import scipy.signal
-from tensorboard import TensorBoard
+#from tensorboard import TensorBoard
 import torch
 from torch import nn
 import torch.nn.parallel
@@ -158,8 +158,10 @@ class Trainer(object):
 
         self.max_length = self.args.shared_rnn_max_length
 
+        self.tb = None
         if args.use_tensorboard:
-            self.tb = TensorBoard(args.model_dir)
+            pass
+            #self.tb = TensorBoard(args.model_dir)
         else:
             self.tb = None
         self.build_model()
@@ -536,8 +538,9 @@ class Trainer(object):
         val_loss = utils.to_item(total_loss) / len(data)
         ppl = math.exp(val_loss)
 
-        self.tb.scalar_summary(f'eval/{name}_loss', val_loss, self.epoch)
-        self.tb.scalar_summary(f'eval/{name}_ppl', ppl, self.epoch)
+        if self.tb:
+            self.tb.scalar_summary(f'eval/{name}_loss', val_loss, self.epoch)
+            self.tb.scalar_summary(f'eval/{name}_ppl', ppl, self.epoch)
         logger.info(f'eval | loss: {val_loss:8.2f} | ppl: {ppl:8.2f}')
 
     def derive(self, sample_num=None, valid_idx=0):
@@ -565,7 +568,8 @@ class Trainer(object):
                  f'{max_R:6.4f}-best.png')
         path = os.path.join(self.args.model_dir, 'networks', fname)
         utils.draw_network(best_dag, path)
-        self.tb.image_summary('derive/best', [path], self.epoch)
+        if self.tb:
+            self.tb.image_summary('derive/best', [path], self.epoch)
 
         return best_dag
 
