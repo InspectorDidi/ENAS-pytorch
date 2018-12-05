@@ -79,10 +79,11 @@ learn_arg.add_argument('--mode', type=str, default='train',
                        choices=['train', 'derive', 'test'],
                        help='train: Training ENAS, derive: Deriving Architectures')
 learn_arg.add_argument('--batch_size', type=int, default=64)
+learn_arg.add_argument('--policy_batch_size', type=int, default=10)
 learn_arg.add_argument('--test_batch_size', type=int, default=1)
 learn_arg.add_argument('--max_epoch', type=int, default=150)
 learn_arg.add_argument('--entropy_mode', type=str, default='reward', choices=['reward', 'regularizer'])
-
+learn_arg.add_argument('--retrain_shared', type=str2bool, default=False)
 
 # Controller
 learn_arg.add_argument('--ppl_square', type=str2bool, default=False)

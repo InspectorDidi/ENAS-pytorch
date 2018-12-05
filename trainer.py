@@ -125,7 +125,7 @@ class Trainer(object):
         self.start_epoch = 0
         # best_evaluated_dag on the validation set
         self.best_evaluated_dag = None
-        self.best_ppl = 100000000000000000.0
+        self.best_ppl = np.inf
         self.best_epoch    = None
 
         logger.info('regularizing:')
@@ -450,7 +450,8 @@ class Trainer(object):
         for step in range(self.args.controller_max_step):
             # sample models
             dags, log_probs, entropies = self.controller.sample(
-                with_details=True)
+#                                         batch_size=self.args.policy_batch_size,
+                                         with_details=True)
             #dags now contians 1 dag
             #log_probs.size() is 23 
 
