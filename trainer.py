@@ -199,7 +199,7 @@ class Trainer(object):
         elif self.args.num_gpu > 1:
             raise NotImplementedError('`num_gpu > 1` is in progress')
 
-    def train(self):
+    def train(self, single=False):
         """Cycles through alternately training the shared parameters and the
         controller, as described in Section 2.2, Training ENAS and Deriving
         Architectures, of the paper.
@@ -211,9 +211,14 @@ class Trainer(object):
 
         - In the second phase, the controller's parameters are trained for 2000
           steps.
+          
+        Args:
+            single (bool): If True it won't train the controller and use the
+                           same dag instead of derive().
         """
         shared_train_times = []
         controller_train_times = []
+        dag = utils.load_dag(self.args) if single else None
         self.shared.forward_evals=0
         if self.args.shared_initial_step > 0:
             self.train_shared(self.args.shared_initial_step)
@@ -228,15 +233,16 @@ class Trainer(object):
             logger.info(f'>>> train_shared() time: {shared_train_time} Epoch: {self.epoch}')
 
             # 2. Training the controller parameters theta
-            start_time = time.time()
-            self.train_controller()
-            controller_train_time = time.time()-start_time
-            controller_train_times.append(controller_train_time)
-            logger.info(f'>>> train_controller() time: {shared_train_time} Epoch: {self.epoch}')
+            if not single:
+                start_time = time.time()
+                self.train_controller()
+                controller_train_time = time.time()-start_time
+                controller_train_times.append(controller_train_time)
+                logger.info(f'>>> train_controller() time: {shared_train_time} Epoch: {self.epoch}')
 
             if self.epoch % self.args.save_epoch == 0:
                 with _get_no_grad_ctx_mgr():
-                    best_dag = self.derive()
+                    best_dag = dag if dag else self.derive()
                     loss, ppl = self.evaluate(self.eval_data,
                                   best_dag,
                                   'val_best',
@@ -306,6 +312,7 @@ class Trainer(object):
 
         Args:
             max_step: Used to run extra training steps as a warm-up.
+            dag: If not None, is used instead of calling sample().
 
         BPTT is truncated at 35 timesteps. (Section 2.2 paragraph 2:
         "where the gradW is computed using back-propagation through time, 
@@ -346,7 +353,6 @@ class Trainer(object):
                     dags = dag
             else:
                 dags = self.controller.sample(self.args.shared_num_sample)
-            #(PT) TODO: refactor so you can pass in dags (the best_dag)
             inputs, targets = self.get_batch(self.train_data,
                                              train_idx,
                                              self.max_length)
@@ -387,7 +393,7 @@ class Trainer(object):
             train_idx += self.max_length
         logger.info(f'@@@ there were {self.shared.forward_evals} in this shared training epoch @@@')
 
-    def get_reward(self, dag, entropies, hidden, valid_idx=None):
+    def get_reward(self, dag, entropies, hidden, valid_idx=0):
         """Computes the perplexity of a single sampled model on a minibatch of
         validation data.
         """
