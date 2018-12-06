@@ -20,6 +20,7 @@ net_arg = add_argument_group('Network')
 net_arg.add_argument('--network_type', type=str, choices=['rnn', 'cnn'], default='rnn')
 
 # Controller
+#should really be called --num_nodes instead of num_blocks!
 net_arg.add_argument('--num_blocks', type=int, default=12)
 net_arg.add_argument('--tie_weights', type=str2bool, default=True)
 net_arg.add_argument('--controller_hid', type=int, default=100)
@@ -33,11 +34,14 @@ net_arg.add_argument('--shared_dropoute', type=float, default=0.1) # TODO
 net_arg.add_argument('--shared_dropouti', type=float, default=0.65) # TODO
 net_arg.add_argument('--shared_embed', type=int, default=1000) # TODO: 200, 500, 1000
 net_arg.add_argument('--shared_hid', type=int, default=1000)
-net_arg.add_argument('--shared_rnn_max_length', type=int, default=35)
+net_arg.add_argument('--shared_rnn_max_length', type=int, default=35) #called child_bptt_steps in TF
 net_arg.add_argument('--shared_rnn_activations', type=eval,
                      default="['tanh', 'ReLU', 'identity', 'sigmoid']")
 net_arg.add_argument('--shared_cnn_types', type=eval,
                      default="['3x3', '5x5', 'sep 3x3', 'sep 5x5', 'max 3x3', 'max 5x5']")
+
+# train best shared model from each epoch
+net_arg.add_argument('--train_best', type=str2bool, default=False)
 
 # PTB regularizations
 net_arg.add_argument('--activation_regularization',
@@ -76,10 +80,11 @@ learn_arg.add_argument('--mode', type=str, default='train',
                        help='train: Training ENAS, derive: Deriving Architectures,\
                        single: training one dag')
 learn_arg.add_argument('--batch_size', type=int, default=64)
+learn_arg.add_argument('--policy_batch_size', type=int, default=10)
 learn_arg.add_argument('--test_batch_size', type=int, default=1)
 learn_arg.add_argument('--max_epoch', type=int, default=150)
 learn_arg.add_argument('--entropy_mode', type=str, default='reward', choices=['reward', 'regularizer'])
-
+learn_arg.add_argument('--retrain_shared', type=str2bool, default=False)
 
 # Controller
 learn_arg.add_argument('--ppl_square', type=str2bool, default=False)
