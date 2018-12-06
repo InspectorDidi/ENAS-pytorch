@@ -14,6 +14,7 @@ from torch.autograd import Variable
 
 import models
 import utils
+import time
 
 
 logger = utils.get_logger()
@@ -211,6 +212,8 @@ class Trainer(object):
         - In the second phase, the controller's parameters are trained for 2000
           steps.
         """
+        shared_train_times = []
+        controller_train_times = []
         self.shared.forward_evals=0
         if self.args.shared_initial_step > 0:
             self.train_shared(self.args.shared_initial_step)
@@ -218,10 +221,18 @@ class Trainer(object):
 
         for self.epoch in range(self.start_epoch, self.args.max_epoch):
             # 1. Training the shared parameters omega of the child models
+            start_time = time.time()
             self.train_shared()
+            shared_train_time = time.time()-start_time
+            shared_train_times.append(shared_train_time)
+            logger.info(f'>>> train_shared() time: {shared_train_time} Epoch: {self.epoch}')
 
             # 2. Training the controller parameters theta
+            start_time = time.time()
             self.train_controller()
+            controller_train_time = time.time()-start_time
+            controller_train_times.append(controller_train_time)
+            logger.info(f'>>> train_controller() time: {shared_train_time} Epoch: {self.epoch}')
 
             if self.epoch % self.args.save_epoch == 0:
                 with _get_no_grad_ctx_mgr():
@@ -260,6 +271,12 @@ class Trainer(object):
         self.train_shared(2000, self.best_evaluated_dag)
         logger.info('<< finished training best_evaluated_dag')
         self.save_shared()
+        shared_train_time_variance = np.var(shared_train_times)
+        logger.info(f'Shared Training time variance: {shared_train_time_variance}')
+        controller_train_time_variance = np.var(controller_train_times)
+        logger.info(f'Controller Training time variance: {controller_train_time_variance}')
+        logger.info(f'shared train times: {shared_train_times}')
+        logger.info(f'controller train times: {controller_train_times}')
 
 
     def get_loss(self, inputs, targets, hidden, dags):
