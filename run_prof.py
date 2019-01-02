@@ -11,8 +11,15 @@ import re
 #parser.add_argument("-V", "--version", help="show program version", action="store_true")
 import sys
 
+USE_GPU = False
 filenm = "out_gpu_prof"
-OUTDIR = "profiles"
+if USE_GPU:
+    OUTDIR = f"profiles_gpu"
+    NUM_GPU = 1 
+else:
+    OUTDIR = f"profiles_cpu"
+    NUM_GPU = 0
+
 if not os.path.exists(OUTDIR):
     os.makedirs(OUTDIR)
 
@@ -27,7 +34,7 @@ def process_profs(outstr,filenm):
     non_decimal = re.compile(r'[^\d.]+')
 #TODO track number of calls of each function as well
     functions = {}
-    out_filenm = f"./profiles/{filenm}"
+    out_filenm = f"./{OUTDIR}/{filenm}"
     print(f"Writing to: {out_filenm}")
     out_file = open(out_filenm,'w')
     lines = outstr.splitlines()
@@ -95,13 +102,14 @@ prof_args = ['prof_ctrl_bp',
             'prof_shared_bp',
             'prof_ctrl_fwd',
             'prof_shared_fwd',
-            'prof_sample']
+            'prof_sample'
+            ]
 
 for prof_arg in prof_args:
     command = [  "python3",
-                 "main.py", 
+                 "main.py",
                  "--network_type",
-                 "rnn", 
+                 "rnn",
                  "--dataset",
                  "ptb",
                  "--controller_optim",
@@ -118,6 +126,8 @@ for prof_arg in prof_args:
                  "1",
                  "--num_blocks",
                  "12",
+                 "--num_gpu",
+                 f"{NUM_GPU}",
                  f"--{prof_arg}",
                  "True"
                ]

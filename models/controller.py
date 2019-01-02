@@ -143,7 +143,7 @@ class Controller(torch.nn.Module):
             embed = inputs
 
         if self.args.prof_ctrl_fwd and not self.run_fwd_once:
-            with torch.autograd.profiler.profile(use_cuda=True) as prof:
+            with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
                 hx, cx = self.lstm(embed, hidden)
             print("-"*64)
             print("Profile Controller Forward LSTM eval: ---------------------------")

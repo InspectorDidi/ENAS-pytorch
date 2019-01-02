@@ -256,7 +256,7 @@ class Trainer(object):
         loss = 0
         for dag in dags:
             if self.args.prof_shared_fwd and not self.run_shared_fwd_once:
-                with torch.autograd.profiler.profile() as prof:
+                with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
                     output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)
                 print("-"*64)
                 print("Profile Shared Forward")
@@ -312,7 +312,7 @@ class Trainer(object):
                 break
 
             if self.args.prof_sample and (not self.run_sample_once and train_idx > 5):
-                with torch.autograd.profiler.profile() as prof:
+                with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
                    dags = self.controller.sample(self.args.shared_num_sample)
                 print("-"*64)
                 print("Profile Controller Sample")
@@ -339,7 +339,7 @@ class Trainer(object):
             self.shared_optim.zero_grad()
 
             if self.args.prof_shared_bp and (not self.run_shared_bp_once and train_idx > 5):
-                with torch.autograd.profiler.profile(use_cuda=True) as prof:
+                with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
                     loss.backward()
                 print("-"*64)
                 print("Profile Shared Back prop: ")
@@ -476,7 +476,7 @@ class Trainer(object):
             self.controller_optim.zero_grad()
 
             if self.args.prof_ctrl_bp and (not self.run_ctrl_bp_once and step > 5):
-                with torch.autograd.profiler.profile(use_cuda=True) as prof:
+                with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
                     loss.backward()
                 print("-"*64)
                 print("Profile Controller Back prop: ---------------------------")
