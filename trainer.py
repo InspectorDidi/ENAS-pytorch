@@ -16,6 +16,7 @@ import models
 import utils
 import time
 
+from utils import profile
 
 logger = utils.get_logger()
 
@@ -138,7 +139,7 @@ class Trainer(object):
                              self.args.norm_stabilizer_regularization)]:
             if regularizer[1]:
                 logger.info(f'{regularizer[0]}')
-
+        logger.info('batchify datasets:')
         self.train_data = utils.batchify(dataset.train,
                                          args.batch_size,
                                          self.cuda)
@@ -199,6 +200,7 @@ class Trainer(object):
         elif self.args.num_gpu > 1:
             raise NotImplementedError('`num_gpu > 1` is in progress')
 
+    @profile
     def train(self):
         """Cycles through alternately training the shared parameters and the
         controller, as described in Section 2.2, Training ENAS and Deriving
@@ -279,6 +281,7 @@ class Trainer(object):
         logger.info(f'controller train times: {controller_train_times}')
 
 
+#    @profile
     def get_loss(self, inputs, targets, hidden, dags):
         """Computes the loss for the same batch for M models.
         (where M = len(dags))
@@ -289,10 +292,10 @@ class Trainer(object):
         if not isinstance(dags, list):
             dags = [dags]
 
-        loss = 0
-        for dag in dags:
-            output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)
-            output_flat = output.view(-1, self.dataset.num_tokens)
+        loss = 0 #inputs.size=[35,64], hidden.size=[64,1000]
+        for dag in dags: #self.shared calls RNN.forward
+            output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden) #output.size=[35,64,10000]
+            output_flat = output.view(-1, self.dataset.num_tokens) #output_flat=[2240,10000]
             sample_loss = (self.ce(output_flat, targets) /
                            self.args.shared_num_sample)
             loss += sample_loss
@@ -300,6 +303,7 @@ class Trainer(object):
         assert len(dags) == 1, 'there are multiple `hidden` for multple `dags`'
         return loss, hidden, extra_out
 
+    @profile
     def train_shared(self, max_step=None, dag=None):
         """Train the language model for 400 steps of minibatches of 64
         examples.
@@ -334,9 +338,10 @@ class Trainer(object):
         raw_total_loss = 0
         total_loss = 0
         train_idx = 0
+        # self.train_data.size() = [14524,64] = [14524,BATCH_SIZE]
         # TODO(brendan): Why - 1 - 1?
         while train_idx < self.train_data.size(0) - 1 - 1:
-            if step > max_step:
+            if step > max_step: # 400X
                 break
 
             if dag:
@@ -350,11 +355,15 @@ class Trainer(object):
             inputs, targets = self.get_batch(self.train_data,
                                              train_idx,
                                              self.max_length)
-
+            #inputs.size() = [35,64]
+            #targets.size() = 2240 == 35*64
             loss, hidden, extra_out = self.get_loss(inputs,
                                                     targets,
                                                     hidden,
                                                     dags)
+            # loss: scalar
+            # hidden.size() == [64,1000]
+            # extra_out
             hidden.detach_()
             raw_total_loss += loss.data
 
@@ -387,6 +396,7 @@ class Trainer(object):
             train_idx += self.max_length
         logger.info(f'@@@ there were {self.shared.forward_evals} in this shared training epoch @@@')
 
+#    @profile
     def get_reward(self, dag, entropies, hidden, valid_idx=None):
         """Computes the perplexity of a single sampled model on a minibatch of
         validation data.
@@ -406,7 +416,7 @@ class Trainer(object):
                                          self.max_length,
                                          volatile=True)
         valid_loss, hidden, _ = self.get_loss(inputs, targets, hidden, dag)
-        #hidden.size() = [64,1000] -> 64 is minibatch size, 1000??
+        #hidden.size() = [64,1000] -> 64 is minibatch size, 
         # 
         valid_loss = utils.to_item(valid_loss.data)
         #torch.onnx.export(self.shared, inputs, "dag.onnx")
@@ -421,7 +431,7 @@ class Trainer(object):
         else:
             R = self.args.reward_c / valid_ppl
 
-        #entropies - python array with 23 values
+        #entropies - python array with 23 (2*num_blocks-1) values
         if self.args.entropy_mode == 'reward':
             rewards = R + self.args.entropy_coeff * entropies
         elif self.args.entropy_mode == 'regularizer':
@@ -431,6 +441,7 @@ class Trainer(object):
 
         return rewards, hidden, valid_ppl
 
+    @profile
     def train_controller(self):
         """Fixes the shared parameters and updates the controller parameters.
 
@@ -457,8 +468,8 @@ class Trainer(object):
         entropy_history = []
         reward_history = []
 
-        #PT: hidden.size() is [64,1000]:
-        hidden = self.shared.init_hidden(self.args.batch_size)
+        #PT: hidden.size() is [64,1000]: [BATCH_SIZE,CHILD_RNN_HIDDEN_WIDTH]
+        hidden = self.shared.init_hidden(self.args.batch_size) #init to 0.0
 
         total_loss = 0
         valid_idx = 0
@@ -467,7 +478,7 @@ class Trainer(object):
         for step in range(self.args.controller_max_step):
             # sample models
             dags, log_probs, entropies = self.controller.sample(
-#                                         batch_size=self.args.policy_batch_size,
+                                         batch_size=self.args.policy_batch_size,
                                          with_details=True)
             #dags now contians 1 dag
             #log_probs.size() is 23 
@@ -481,7 +492,7 @@ class Trainer(object):
                                                   np_entropies,
                                                   hidden,
                                                   valid_idx)
-            # len(rewards) is 23
+            # len(rewards) is 23 (2*numblocks -1)
             # hidden.size() is [64,1000]
 
             # discount
@@ -545,8 +556,8 @@ class Trainer(object):
             # validation data, we reset the hidden states.
             if prev_valid_idx > valid_idx:
                 hidden = self.shared.init_hidden(self.args.batch_size)
-        logger.info(f'$$$ There were {self.shared.forward_evals} shared evals in this controller training epoch')
-        logger.info(f'$$$ There were {self.controller.forward_evals} forward evals in this controller training epoch')
+        logger.info(f'$$$ There were {self.shared.forward_evals} shared forward evals in this controller training epoch')
+        logger.info(f'$$$ There were {self.controller.forward_evals} controller forward evals in this controller training epoch')
 
     def evaluate(self, source, dag, name, batch_size=1, max_num=None):
         """Evaluate dag (child model) on the validation set.
@@ -716,11 +727,11 @@ class Trainer(object):
             map_location = None
 
         self.shared.load_state_dict(
-            torch.load(self.shared_path, map_location=map_location))
+            torch.load(self.shared_path, map_location=map_location), strict=False)
         logger.info(f'[*] LOADED: {self.shared_path}')
 
         self.controller.load_state_dict(
-            torch.load(self.controller_path, map_location=map_location))
+            torch.load(self.controller_path, map_location=map_location), strict=False)
         logger.info(f'[*] LOADED: {self.controller_path}')
 
     def _summarize_controller_train(self,

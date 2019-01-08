@@ -7,10 +7,13 @@ import torch.nn.functional as F
 
 import utils
 
+from utils import profile
+
 
 Node = collections.namedtuple('Node', ['id', 'name'])
 
 
+@profile
 def _construct_dags(prev_nodes, activations, func_names, num_blocks):
     """Constructs a set of DAGs based on the actions, i.e., previous nodes and
     activation functions, sampled from the controller/policy pi.
@@ -48,16 +51,27 @@ def _construct_dags(prev_nodes, activations, func_names, num_blocks):
         # add first node
         dag[-1] = [Node(0, func_names[func_ids[0]])]
         dag[-2] = [Node(0, func_names[func_ids[0]])]
+        #fname = (f'dag-0.png')
+        #path = os.path.join('networks', fname)
+        #utils.draw_network(dag, path)
 
         # add following nodes
         for jdx, (idx, func_id) in enumerate(zip(nodes, func_ids[1:])):
             dag[utils.to_item(idx)].append(Node(jdx + 1, func_names[func_id]))
+            #save dag pic out to show progression
+            #fname = (f'dag-'
+            #         f'{jdx+1}.png')
+            #path = os.path.join('networks', fname)
+            #utils.draw_network(dag, path)
 
         leaf_nodes = set(range(num_blocks)) - dag.keys()
 
         # merge with avg all leaf nodes
         for idx in leaf_nodes:
             dag[idx] = [Node(num_blocks, 'avg')]
+        #fname = (f'dag-final.png')
+        #path = os.path.join('networks', fname)
+        #utils.draw_network(dag, path)
 
         # TODO(brendan): This is actually y^{(t)}. h^{(t)} is node N - 1 in
         # the graph, where N Is the number of nodes. I.e., h^{(t)} takes
@@ -97,8 +111,8 @@ class Controller(torch.nn.Module):
                                self.args.num_blocks]
             self.func_names = args.shared_cnn_types
 
-        num_total_tokens = sum(self.num_tokens)
-
+        num_total_tokens = sum(self.num_tokens) #why sum the tokens here?
+        #Shouldn't this be: num_total_tokens = len(args.shared_rnn_activations)+self.args.num_blocks
         self.encoder = torch.nn.Embedding(num_total_tokens,
                                           args.controller_hid)
         #args.controller_hid = 100
@@ -132,7 +146,8 @@ class Controller(torch.nn.Module):
         for decoder in self.decoders:
             decoder.bias.data.fill_(0)
 
-    def forward(self,  # pylint:disable=arguments-differ
+    @profile
+    def forward_cont(self,  # pylint:disable=arguments-differ
                 inputs,
                 hidden,
                 block_idx,
@@ -154,6 +169,7 @@ class Controller(torch.nn.Module):
 
         return logits, (hx, cx)
 
+    @profile
     def sample(self, batch_size=1, with_details=False, save_dir=None):
         """Samples a set of `args.num_blocks` many computational nodes from the
         controller, where each node is made up of an activation function, and
@@ -163,7 +179,7 @@ class Controller(torch.nn.Module):
             raise Exception(f'Wrong batch_size: {batch_size} < 1')
 
         # [B, L, H]
-        inputs = self.static_inputs[batch_size]
+        inputs = self.static_inputs[batch_size] #size [1,100]
         hidden = self.static_init_hidden[batch_size]
 
         activations = []
@@ -175,17 +191,17 @@ class Controller(torch.nn.Module):
         # which only gets an activation function. The last node is the output
         # node, and its previous node is the average of all leaf nodes.
         for block_idx in range(2*(self.args.num_blocks - 1) + 1):
-            logits, hidden = self.forward(inputs,
-                                          hidden,
+            logits, hidden = self.forward_cont(inputs, #inputs.size=([1,100])
+                                          hidden,      #([1,100],[1,100])
                                           block_idx,
                                           is_embed=(block_idx == 0))
-
-            probs = F.softmax(logits, dim=-1)
+            #logits.size()=(1,1)
+            probs = F.softmax(logits, dim=-1) #size: [1,4] one prob for each acitvation func
             log_prob = F.log_softmax(logits, dim=-1)
             # TODO(brendan): .mean() for entropy?
             entropy = -(log_prob * probs).sum(1, keepdim=False)
 
-            action = probs.multinomial(num_samples=1).data
+            action = probs.multinomial(num_samples=1).data #some randomness possible here
             selected_log_prob = log_prob.gather        (
                 1, utils.get_variable(action, requires_grad=False))
 
@@ -197,7 +213,7 @@ class Controller(torch.nn.Module):
             # 0: function, 1: previous node
             mode = block_idx % 2
             inputs = utils.get_variable(
-                action[:, 0] + sum(self.num_tokens[:mode]),
+                action[:, 0] + sum(self.num_tokens[:mode]), #?? why the add here??
                 requires_grad=False)
 
             if mode == 0:

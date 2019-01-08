@@ -9,6 +9,7 @@ from torch.autograd import Variable
 
 import models.shared_base
 import utils
+from utils import profile
 
 
 logger = utils.get_logger()
@@ -138,7 +139,7 @@ class RNN(models.shared_base.SharedModel):
 
         self.args = args
         self.corpus = corpus
-        self.forward_eval = 0
+        self.forward_evals = 0
 
         self.decoder = nn.Linear(args.shared_hid, corpus.num_tokens)
         self.encoder = EmbeddingDropout(corpus.num_tokens,
@@ -193,6 +194,7 @@ class RNN(models.shared_base.SharedModel):
 
         logger.info(f'# of parameters: {format(self.num_parameters, ",d")}')
 
+    @profile
     def forward(self,  # pylint:disable=arguments-differ
                 inputs,
                 dag,
@@ -210,10 +212,13 @@ class RNN(models.shared_base.SharedModel):
                                          self.args.shared_wdrop,
                                          self.training)
 
+        #self.w_hh and self.w_hc size == [1000,1000]
+
         if hidden is None:
             hidden = self.static_init_hidden[batch_size]
 
         embed = self.encoder(inputs)
+        #embed.size() = 35x64x1000
 
         if self.args.shared_dropouti > 0:
             embed = self.lockdrop(embed,
@@ -231,8 +236,8 @@ class RNN(models.shared_base.SharedModel):
         max_clipped_norm = 0
         h1tohT = []
         logits = []
-        for step in range(time_steps):
-            x_t = embed[step]
+        for step in range(time_steps): #time_steps == 35 
+            x_t = embed[step] #x_t.size == [64,1000]
             logit, hidden = self.cell(x_t, hidden, dag)
 
             hidden_norms = hidden.norm(dim=-1)
@@ -258,8 +263,12 @@ class RNN(models.shared_base.SharedModel):
                 normalizer = normalizer[:, np.newaxis]
 
                 mask[clip_select] = normalizer
-                hidden *= torch.autograd.Variable(
-                    torch.FloatTensor(mask).cuda(), requires_grad=False)
+                if self.args.cuda:
+                    hidden *= torch.autograd.Variable(
+                        torch.FloatTensor(mask).cuda(), requires_grad=False)
+                else:
+                    hidden *= torch.autograd.Variable(
+                        torch.FloatTensor(mask), requires_grad=False)
 
             logits.append(logit)
             h1tohT.append(hidden)
@@ -271,7 +280,7 @@ class RNN(models.shared_base.SharedModel):
 
         h1tohT = torch.stack(h1tohT)
         output = torch.stack(logits)
-        raw_output = output
+        raw_output = output #size: [35,64,1000]
         if self.args.shared_dropout > 0:
             output = self.lockdrop(output,
                                    self.args.shared_dropout if is_train else 0)
@@ -281,12 +290,13 @@ class RNN(models.shared_base.SharedModel):
         decoded = self.decoder(
             output.view(output.size(0)*output.size(1), output.size(2)))
         decoded = decoded.view(output.size(0), output.size(1), decoded.size(1))
-
+        #decoded.size() = [35,64,10000] 10,000 is from self.corpus.num_tokens
         extra_out = {'dropped': dropped_output,
                      'hiddens': h1tohT,
                      'raw': raw_output}
         return decoded, hidden, extra_out
 
+    @profile
     def cell(self, x, h_prev, dag):
         """Computes a single pass through the discovered RNN cell."""
         self.forward_evals += 1
@@ -294,10 +304,20 @@ class RNN(models.shared_base.SharedModel):
         h = {}
         f = {}
 
-        f[0] = self.get_f(dag[-1][0].name)
+        # x.size() = [64x1000]
+        
+        f[0] = self.get_f(dag[-1][0].name) # activation func
         c[0] = F.sigmoid(self.w_xc(x) + F.linear(h_prev, self.w_hc, None))
         h[0] = (c[0]*f[0](self.w_xh(x) + F.linear(h_prev, self.w_hh, None)) +
                 (1 - c[0])*h_prev)
+        #h_prev.size()    = [64x1000]
+        #self.w_hc.size() = [1000,1000]
+        #self.w_xh(x).size= [64x1000]
+        #self.w_xc(x).size= [64x1000]
+        #self.w_hh.size() = [1000,1000]
+        #c[0].size()      = [64x1000]
+        #h[0].size()      = [64x1000]
+
 
         leaf_node_ids = []
         q = collections.deque()

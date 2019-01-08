@@ -7,12 +7,16 @@ import data
 import config
 import utils
 import trainer
+import utils
+from utils import profile
 
 logger = utils.get_logger()
 
 
+@profile
 def main(args):  # pylint:disable=redefined-outer-name
     """main: Entry point."""
+    utils.clear_prof_data()
     utils.prepare_dirs(args)
 
     torch.manual_seed(args.random_seed)
@@ -25,8 +29,9 @@ def main(args):  # pylint:disable=redefined-outer-name
     elif args.dataset == 'cifar':
         dataset = data.image.Image(args.data_path)
     else:
-        raise NotImplementedError(f"{args.dataset} is not supported")
+        raise NotImplementedError(f'{args.dataset} is not supported')
 
+    #with torch.autograd.profiler.profile(use_cuda=True) as prof:
     trnr = trainer.Trainer(args, dataset)
 
     if args.mode == 'train':
@@ -36,12 +41,13 @@ def main(args):  # pylint:disable=redefined-outer-name
         assert args.load_path != "", ("`--load_path` should be given in "
                                       "`derive` mode")
         best_dag = trnr.derive()
-
     else:
         if not args.load_path:
             raise Exception("[!] You should specify `load_path` to load a "
                             "pretrained model")
         trnr.test() #NOTE: not implemented!
+    utils.print_prof_data()
+    #print(prof)
 
 
 if __name__ == "__main__":

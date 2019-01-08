@@ -28,6 +28,44 @@ except:
     imresize = cv2.imresize
     imsave = imwrite = cv2.imwrite
 
+import time
+from functools import wraps
+
+PROF_DATA = {}
+indent = ""
+
+def profile(fn):
+    @wraps(fn)
+    def with_profiling(*args, **kwargs):
+        global indent
+        if len(indent) < 30:
+           indent = indent + " "
+        #print(f'{indent}>>>> Calling: {fn.__name__}')
+        start_time = time.time()
+        ret = fn(*args, **kwargs)
+        elapsed_time = time.time() - start_time
+        if fn.__name__ not in PROF_DATA:
+            PROF_DATA[fn.__name__] = [0, []]
+        PROF_DATA[fn.__name__][0] += 1
+        PROF_DATA[fn.__name__][1].append(elapsed_time)
+        if len(indent) > 1:
+            indent = indent[:-1]
+        return ret
+
+    return with_profiling
+
+def print_prof_data():
+    for fname, data in PROF_DATA.items():
+        max_time = max(data[1])
+        avg_time = sum(data[1]) / len(data[1])
+        print(f'Function {fname} called {data[0]} times. ')
+        print(f'Execution time max: {max_time}, average: {avg_time}')
+
+def clear_prof_data():
+    global PROF_DATA
+    PROF_DATA = {}
+    global indent
+    indent = ""
 
 ##########################
 # Network visualization
