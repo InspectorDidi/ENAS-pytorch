@@ -40,7 +40,7 @@ def main(args):  # pylint:disable=redefined-outer-name
     elif args.mode == 'derive':
         assert args.load_path != "", ("`--load_path` should be given in "
                                       "`derive` mode")
-        trnr.derive()
+        best_dag = trnr.derive()
     elif args.mode == 'test':
         if not args.load_path:
             raise Exception("[!] You should specify `load_path` to load a "

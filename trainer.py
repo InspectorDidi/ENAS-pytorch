@@ -14,6 +14,7 @@ from torch.autograd import Variable
 
 import models
 import utils
+import time
 
 
 logger = utils.get_logger()
@@ -128,6 +129,10 @@ class Trainer(object):
         self.epoch = 0
         self.shared_step = 0
         self.start_epoch = 0
+        # best_evaluated_dag on the validation set
+        self.best_evaluated_dag = None
+        self.best_ppl = np.inf
+        self.best_epoch    = None
 
         logger.info('regularizing:')
         for regularizer in [('activation regularization',
@@ -218,34 +223,78 @@ class Trainer(object):
             single (bool): If True it won't train the controller and use the
                            same dag instead of derive().
         """
+        shared_train_times = []
+        controller_train_times = []
         dag = utils.load_dag(self.args) if single else None
-        
+        self.shared.forward_evals=0
         if self.args.shared_initial_step > 0:
             self.train_shared(self.args.shared_initial_step)
             self.train_controller()
 
         for self.epoch in range(self.start_epoch, self.args.max_epoch):
             # 1. Training the shared parameters omega of the child models
-            self.train_shared(dag=dag)
+            start_time = time.time()
+            self.train_shared()
+            shared_train_time = time.time()-start_time
+            shared_train_times.append(shared_train_time)
+            logger.info(f'>>> train_shared() time: {shared_train_time} Epoch: {self.epoch}')
 
             # 2. Training the controller parameters theta
             if not single:
+                start_time = time.time()
                 self.train_controller()
+                controller_train_time = time.time()-start_time
+                controller_train_times.append(controller_train_time)
+                logger.info(f'>>> train_controller() time: {shared_train_time} Epoch: {self.epoch}')
 
             if self.epoch % self.args.save_epoch == 0:
                 with _get_no_grad_ctx_mgr():
                     best_dag = dag if dag else self.derive()
-                    self.evaluate(self.eval_data,
+                    loss, ppl = self.evaluate(self.eval_data,
                                   best_dag,
                                   'val_best',
                                   max_num=self.args.batch_size*100)
+                    # PT: we could annotate best_dag with the following:
+                    #best_dag["ppl"]  = ppl
+                    #best_dag["loss"] = loss
+                    if ppl < self.best_ppl:
+                        self.best_ppl = ppl
+                        self.best_evaluated_dag = best_dag
+                        self.best_epoch = self.epoch
                 self.save_model()
+            #######################################################################
+            #(PT)
+            #MISSING: Best (highest reward) child model needs to be re-trained from
+            #scratch here and evaluated for perplexity on the validation set
+            #######################################################################
+            if(self.args.train_best):
+                logger.info('>> train_shared(1000, best_dag)')
+                self.train_shared(2000, best_dag)
+                logger.info('<< finished training best_dag')
 
             if self.epoch >= self.args.shared_decay_after:
                 utils.update_lr(self.shared_optim, self.shared_lr)
+        self.save_dag(self.best_evaluated_dag)
+        logger.info(f'BEFORE RETRAINING BEST DAG:')
+        logger.info(f'Best Dag: {self.best_evaluated_dag}')
+        logger.info(f'Found in epoch: {self.best_epoch}')
+        logger.info(f'With perplexity: {self.best_ppl}')
+        logger.info(f'AFTER RETRAINING BEST DAG:')
+        logger.info('>> Final evaluation: train_shared(2000, best_evaluated_dag)')
+        self.train_shared(2000, self.best_evaluated_dag)
+        logger.info('<< finished training best_evaluated_dag')
+        self.save_shared()
+        shared_train_time_variance = np.var(shared_train_times)
+        logger.info(f'Shared Training time variance: {shared_train_time_variance}')
+        controller_train_time_variance = np.var(controller_train_times)
+        logger.info(f'Controller Training time variance: {controller_train_time_variance}')
+        logger.info(f'shared train times: {shared_train_times}')
+        logger.info(f'controller train times: {controller_train_times}')
+
 
     def get_loss(self, inputs, targets, hidden, dags):
         """Computes the loss for the same batch for M models.
+        (where M = len(dags))
 
         This amounts to an estimate of the loss, which is turned into an
         estimate for the gradients of the shared model.
@@ -282,21 +331,25 @@ class Trainer(object):
             max_step: Used to run extra training steps as a warm-up.
             dag: If not None, is used instead of calling sample().
 
-        BPTT is truncated at 35 timesteps.
+        BPTT is truncated at 35 timesteps. (Section 2.2 paragraph 2:
+        "where the gradW is computed using back-propagation through time, 
+        (BPTT) truncated at 35 time steps")
 
         For each weight update, gradients are estimated by sampling M models
         from the fixed controller policy, and averaging their gradients
         computed on a batch of training data.
         """
         run_once = False
+        self.shared.forward_evals = 0
         model = self.shared
         model.train()
+        # set controller to evaluation mode (ie. don't train controller)
         self.controller.eval()
 
         hidden = self.shared.init_hidden(self.args.batch_size)
 
         if max_step is None:
-            max_step = self.args.shared_max_step
+            max_step = self.args.shared_max_step #currently 400
         else:
             max_step = min(self.args.shared_max_step, max_step)
 
@@ -370,6 +423,7 @@ class Trainer(object):
             step += 1
             self.shared_step += 1
             train_idx += self.max_length
+        logger.info(f'@@@ there were {self.shared.forward_evals} in this shared training epoch @@@')
 
     def get_reward(self, dag, entropies, hidden, valid_idx=0):
         """Computes the perplexity of a single sampled model on a minibatch of
@@ -378,13 +432,24 @@ class Trainer(object):
         if not isinstance(entropies, np.ndarray):
             entropies = entropies.data.cpu().numpy()
 
+        if valid_idx:
+            valid_idx = 0
+        #self.valid_data.size()=[1152,64]
+        #self.max_length=35 ("gradient w is computed using back-propagation through
+        # time truncted to 35 time steps" - Section 2.2 2nd paragraph)
+        # inputs.size() = [35,64]
+        # targets.size() = 2240 = 35*64
         inputs, targets = self.get_batch(self.valid_data,
                                          valid_idx,
                                          self.max_length,
                                          volatile=True)
         valid_loss, hidden, _ = self.get_loss(inputs, targets, hidden, dag)
+        #hidden.size() = [64,1000] -> 64 is minibatch size, 1000??
+        # 
         valid_loss = utils.to_item(valid_loss.data)
-
+        #torch.onnx.export(self.shared, inputs, "dag.onnx")
+        
+        #perplexity
         valid_ppl = math.exp(valid_loss)
 
         # TODO: we don't know reward_c
@@ -394,6 +459,7 @@ class Trainer(object):
         else:
             R = self.args.reward_c / valid_ppl
 
+        #entropies - python array with 23 values
         if self.args.entropy_mode == 'reward':
             rewards = R + self.args.entropy_coeff * entropies
         elif self.args.entropy_mode == 'regularizer':
@@ -401,7 +467,7 @@ class Trainer(object):
         else:
             raise NotImplementedError(f'Unkown entropy mode: {self.args.entropy_mode}')
 
-        return rewards, hidden
+        return rewards, hidden, valid_ppl
 
     def train_controller(self):
         """Fixes the shared parameters and updates the controller parameters.
@@ -415,6 +481,8 @@ class Trainer(object):
         The controller is trained for 2000 steps per epoch (i.e.,
         first (Train Shared) phase -> second (Train Controller) phase).
         """
+        self.controller.forward_evals = 0
+        self.shared.forward_evals = 0
         model = self.controller
         model.train()
         # TODO(brendan): Why can't we call shared.eval() here? Leads to loss
@@ -427,24 +495,33 @@ class Trainer(object):
         entropy_history = []
         reward_history = []
 
+        #PT: hidden.size() is [64,1000]:
         hidden = self.shared.init_hidden(self.args.batch_size)
+
         total_loss = 0
         valid_idx = 0
         run_once = False
+        # self.args.controller_max_step is 2000
+        # train the controller LSTM for 2000 steps:
         for step in range(self.args.controller_max_step):
             # sample models
             dags, log_probs, entropies = self.controller.sample(
-                with_details=True)
+#                                         batch_size=self.args.policy_batch_size,
+                                         with_details=True)
+            #dags now contians 1 dag
+            #log_probs.size() is 23 
 
             # calculate reward
             np_entropies = entropies.data.cpu().numpy()
             # NOTE(brendan): No gradients should be backpropagated to the
             # shared model during controller training, obviously.
             with _get_no_grad_ctx_mgr():
-                rewards, hidden = self.get_reward(dags,
+                rewards, hidden, _ = self.get_reward(dags,
                                                   np_entropies,
                                                   hidden,
                                                   valid_idx)
+            # len(rewards) is 23
+            # hidden.size() is [64,1000]
 
             # discount
             if 1 > self.args.discount > 0:
@@ -461,16 +538,19 @@ class Trainer(object):
                 baseline = decay * baseline + (1 - decay) * rewards
 
             adv = rewards - baseline
+            # len(adv) is 23
             adv_history.extend(adv)
 
             # policy loss
             loss = -log_probs*utils.get_variable(adv,
                                                  self.cuda,
                                                  requires_grad=False)
+            #loss.size() is 23
             if self.args.entropy_mode == 'regularizer':
                 loss -= self.args.entropy_coeff * entropies
 
             loss = loss.sum()  # or loss.mean()
+            # Now loss is a scalar tensor
 
             # update
             self.controller_optim.zero_grad()
@@ -489,6 +569,7 @@ class Trainer(object):
             if self.args.controller_grad_clip > 0:
                 torch.nn.utils.clip_grad_norm(model.parameters(),
                                               self.args.controller_grad_clip)
+            #parameters updated here:                                      
             self.controller_optim.step()
 
             total_loss += utils.to_item(loss.data)
@@ -513,9 +594,14 @@ class Trainer(object):
             # validation data, we reset the hidden states.
             if prev_valid_idx > valid_idx:
                 hidden = self.shared.init_hidden(self.args.batch_size)
+        logger.info(f'$$$ There were {self.shared.forward_evals} shared evals in this controller training epoch')
+        logger.info(f'$$$ There were {self.controller.forward_evals} forward evals in this controller training epoch')
 
     def evaluate(self, source, dag, name, batch_size=1, max_num=None):
-        """Evaluate on the validation set.
+        """Evaluate dag (child model) on the validation set.
+           PT: only if validation set data is passed-in in source
+
+           (compare to eval_once in the Tensorflow implementation )
 
         NOTE(brendan): We should not be using the test set to develop the
         algorithm (basic machine learning good practices).
@@ -538,6 +624,7 @@ class Trainer(object):
             output_flat = output.view(-1, self.dataset.num_tokens)
             total_loss += len(inputs) * self.ce(output_flat, targets).data
             hidden.detach_()
+            #PT: Nothing seems to be done with this ppl (?)
             ppl = math.exp(utils.to_item(total_loss) / (count + 1) / self.max_length)
 
         val_loss = utils.to_item(total_loss) / len(data)
@@ -546,8 +633,11 @@ class Trainer(object):
         if self.tb:
             self.tb.scalar_summary(f'eval/{name}_loss', val_loss, self.epoch)
             self.tb.scalar_summary(f'eval/{name}_ppl', ppl, self.epoch)
-        logger.info(f'eval | loss: {val_loss:8.2f} | ppl: {ppl:8.2f}')
+        logger.info(f'eval {name} | loss: {val_loss:8.2f} | ppl: {ppl:8.2f}')
+        return val_loss, ppl
 
+    #derive finds the best dag 
+    # Described in section 2.2
     def derive(self, sample_num=None, valid_idx=0):
         """TODO(brendan): We are always deriving based on the very first batch
         of validation data? This seems wrong...
@@ -560,21 +650,24 @@ class Trainer(object):
         dags, _, entropies = self.controller.sample(sample_num,
                                                     with_details=True)
 
+        #find max reward on a quick check (computed on a single minibatch 
+        # sampled from vaidation set. Section 2.2)
         max_R = 0
         best_dag = None
         for dag in dags:
-            R, _ = self.get_reward(dag, entropies, hidden, valid_idx)
+            R, _, vppl = self.get_reward(dag, entropies, hidden, valid_idx)
             if R.max() > max_R:
                 max_R = R.max()
                 best_dag = dag
 
         logger.info(f'derive | max_R: {max_R:8.6f}')
         fname = (f'{self.epoch:03d}-{self.controller_step:06d}-'
-                 f'{max_R:6.4f}-best.png')
+                 f'{max_R:6.4f}-{vppl:4.2f}-best.png')
         path = os.path.join(self.args.model_dir, 'networks', fname)
         utils.draw_network(best_dag, path)
         if self.tb:
             self.tb.image_summary('derive/best', [path], self.epoch)
+        logger.info(f'best_dag: {best_dag}')
 
         return best_dag
 
@@ -602,6 +695,10 @@ class Trainer(object):
         return f'{self.args.model_dir}/shared_epoch{self.epoch}_step{self.shared_step}.pth'
 
     @property
+    def dag_path(self):
+        return f'{self.args.model_dir}/best_dag.pth'
+
+    @property
     def controller_path(self):
         return f'{self.args.model_dir}/controller_epoch{self.epoch}_step{self.controller_step}.pth'
 
@@ -625,6 +722,11 @@ class Trainer(object):
 
         return epochs, shared_steps, controller_steps
 
+    def save_shared(self):
+        """only save the shared weights"""
+        torch.save(self.shared.state_dict(), self.shared_path)
+        logger.info(f'[*] SAVED: {self.shared_path}')
+
     def save_model(self):
         torch.save(self.shared.state_dict(), self.shared_path)
         logger.info(f'[*] SAVED: {self.shared_path}')
@@ -640,6 +742,13 @@ class Trainer(object):
 
             for path in paths:
                 utils.remove_file(path)
+
+    def save_dag(self, dag):
+        torch.save(dag, self.dag_path)
+        logger.info(f'[*] SAVED: {self.dag_path}')
+
+    def load_dag(self, path):
+        return torch.load(path)
 
     def load_model(self):
         epochs, shared_steps, controller_steps = self.get_saved_models_info()
@@ -683,7 +792,7 @@ class Trainer(object):
             avg_reward_base = avg_reward
 
         logger.info(
-            f'| epoch {self.epoch:3d} | lr {self.controller_lr:.5f} '
+            f'| Controller training summary: epoch {self.epoch:3d} | lr {self.controller_lr:.5f} '
             f'| R {avg_reward:.5f} | entropy {avg_entropy:.4f} '
             f'| loss {cur_loss:.5f}')
 
@@ -725,7 +834,7 @@ class Trainer(object):
         cur_raw_loss = utils.to_item(raw_total_loss) / self.args.log_step
         ppl = math.exp(cur_raw_loss)
 
-        logger.info(f'| epoch {self.epoch:3d} '
+        logger.info(f'| Shared training summary: epoch {self.epoch:3d} '
                     f'| lr {self.shared_lr:4.2f} '
                     f'| raw loss {cur_raw_loss:.2f} '
                     f'| loss {cur_loss:.2f} '

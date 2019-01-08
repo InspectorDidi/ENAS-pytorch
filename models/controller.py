@@ -53,7 +53,7 @@ def _construct_dags(prev_nodes, activations, func_names, num_blocks):
 
         leaf_nodes = set(range(num_blocks)) - dag.keys()
 
-        # merge with avg
+        # merge with avg all leaf nodes
         for idx in leaf_nodes:
             dag[idx] = [Node(num_blocks, 'avg')]
 
@@ -82,7 +82,7 @@ class Controller(torch.nn.Module):
         torch.nn.Module.__init__(self)
         self.args = args
         self.run_fwd_once = False
-
+        self.forward_evals = 0
         if self.args.network_type == 'rnn':
             # NOTE(brendan): `num_tokens` here is just the activation function
             # for every even step,
@@ -100,6 +100,7 @@ class Controller(torch.nn.Module):
 
         self.encoder = torch.nn.Embedding(num_total_tokens,
                                           args.controller_hid)
+        #args.controller_hid = 100
         self.lstm = torch.nn.LSTMCell(args.controller_hid, args.controller_hid)
         if self.args.cuda:
             self.lstm = self.lstm.cuda()
