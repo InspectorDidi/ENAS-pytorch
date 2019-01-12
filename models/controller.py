@@ -7,9 +7,10 @@ import torch.nn.functional as F
 
 import utils
 from utils import Node
+import time
 
 
-def _construct_dags(prev_nodes, activations, func_names, num_blocks):
+def _construct_dags(prev_nodes, activations, func_names, num_blocks, ctlr):
     """Constructs a set of DAGs based on the actions, i.e., previous nodes and
     activation functions, sampled from the controller/policy pi.
 
@@ -52,6 +53,11 @@ def _construct_dags(prev_nodes, activations, func_names, num_blocks):
             dag[utils.to_item(idx)].append(Node(jdx + 1, func_names[func_id]))
 
         leaf_nodes = set(range(num_blocks)) - dag.keys()
+        num_leaves = len(leaf_nodes)
+        if num_leaves in ctlr.num_leaf_nodes_dict:
+            ctlr.num_leaf_nodes_dict[num_leaves] += 1
+        else:
+            ctlr.num_leaf_nodes_dict[num_leaves] = 1
 
         # merge with avg all leaf nodes
         for idx in leaf_nodes:
@@ -83,6 +89,8 @@ class Controller(torch.nn.Module):
         self.args = args
         self.run_fwd_once = False
         self.forward_evals = 0
+        self.ctrl_fwd_times = []
+        self.num_leaf_nodes_dict = {}
         if self.args.network_type == 'rnn':
             # NOTE(brendan): `num_tokens` here is just the activation function
             # for every even step,
@@ -143,6 +151,7 @@ class Controller(torch.nn.Module):
         else:
             embed = inputs
 
+        ctrl_fwd_start_time = time.time()
         if self.args.prof_ctrl_fwd and not self.run_fwd_once:
             with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
                 hx, cx = self.lstm(embed, hidden)
@@ -153,8 +162,10 @@ class Controller(torch.nn.Module):
             self.run_fwd_once = True
         else:
             hx, cx = self.lstm(embed, hidden)
-        logits = self.decoders[block_idx](hx)
+        ctrl_fwd_time = time.time() - ctrl_fwd_start_time
+        self.ctrl_fwd_times.append(ctrl_fwd_time)
 
+        logits = self.decoders[block_idx](hx)
         logits /= self.args.softmax_temperature
 
         # exploration
@@ -221,7 +232,8 @@ class Controller(torch.nn.Module):
         dags = _construct_dags(prev_nodes,
                                activations,
                                self.func_names,
-                               self.args.num_blocks)
+                               self.args.num_blocks,
+                               self)
 
         if save_dir is not None:
             for idx, dag in enumerate(dags):

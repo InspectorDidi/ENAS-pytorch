@@ -133,6 +133,17 @@ class Trainer(object):
         self.best_evaluated_dag = None
         self.best_ppl = np.inf
         self.best_epoch    = None
+        self.once_per_epoch = True
+        self.child_fwd_times = []
+        self.child_fwd_times_per_epoch = []
+        self.child_bp_times  = []
+        self.child_bp_times_per_epoch  = []
+        self.ctrl_fwd_times  = []
+        self.ctrl_fwd_times_per_epoch  = []
+        self.ctrl_bp_times   = []
+        self.ctrl_bp_times_per_epoch   = []
+        self.sample_times    = []
+        self.sample_times_per_epoch    = []
 
         logger.info('regularizing:')
         for regularizer in [('activation regularization',
@@ -206,6 +217,51 @@ class Trainer(object):
         elif self.args.num_gpu > 1:
             raise NotImplementedError('`num_gpu > 1` is in progress')
 
+    def stats_per_epoch(self):
+        #TODO: use per_epoch_times in for loop:
+        per_epoch_times = [(self.child_fwd_times_per_epoch,self.shared.child_fwd_times),
+                           (self.child_bp_times_per_epoch, self.child_bp_times),
+                           (self.ctrl_fwd_times_per_epoch, self.controller.ctrl_fwd_times),
+                           (self.ctrl_bp_times_per_epoch, self.ctrl_bp_times),
+                           (self.sample_times_per_epoch, self.sample_times) ]
+
+        self.child_fwd_times_per_epoch.append(np.mean(self.shared.child_fwd_times))
+        self.shared.child_fwd_times = []
+        self.child_bp_times_per_epoch.append(np.mean(self.child_bp_times))
+        self.child_bp_times = []
+        self.ctrl_fwd_times_per_epoch.append(np.mean(self.controller.ctrl_fwd_times))
+        self.ctrl_fwd_times = []
+        self.ctrl_bp_times_per_epoch.append(np.mean(self.ctrl_bp_times))
+        self.ctrl_bp_times = []
+        self.sample_times_per_epoch.append(np.mean(self.sample_times))
+        self.sample_times = []
+
+    def report_phase(self, times_per_epoch, label):
+        logger.info(f'{label} times: {times_per_epoch}')
+        logger.info(f'    max {label} time in epoch#: {times_per_epoch.index(max(times_per_epoch))}')
+        logger.info(f'    max {label} time: {max(times_per_epoch)}')
+        logger.info(f'    min {label} time in epoch#: {times_per_epoch.index(min(times_per_epoch))}')
+        logger.info(f'    min {label} time: {min(times_per_epoch)}')
+        mean_time = np.mean(times_per_epoch)
+        logger.info(f'    ave {label} time: {mean_time}')
+        logger.info(f'    {label} time variance: {np.var(times_per_epoch)}')
+        return mean_time
+
+    def report_phases(self):
+        per_epoch_times = [(self.child_fwd_times_per_epoch,'child fwd'),
+                           (self.child_bp_times_per_epoch, 'child bp' ),
+                           (self.ctrl_fwd_times_per_epoch, 'ctrl fwd' ),
+                           (self.ctrl_bp_times_per_epoch,  'ctrl bp'  ),
+                           (self.sample_times_per_epoch,   'sample ') ]
+        total_time = 0.0
+        for times in per_epoch_times:
+            print(f'{"-"*30} {times[1]} {"-"*30}')
+            total_time += self.report_phase(times[0], times[1])
+        #logger.info(f'Total time for all phases (ave): {total_time}')
+        print("-"*60)
+
+
+
     def train(self, single=False):
         """Cycles through alternately training the shared parameters and the
         controller, as described in Section 2.2, Training ENAS and Deriving
@@ -225,6 +281,7 @@ class Trainer(object):
         """
         shared_train_times = []
         controller_train_times = []
+        self.child_fwd_times_per_epoch = []
         dag = utils.load_dag(self.args) if single else None
         self.shared.forward_evals=0
         if self.args.shared_initial_step > 0:
@@ -274,22 +331,40 @@ class Trainer(object):
 
             if self.epoch >= self.args.shared_decay_after:
                 utils.update_lr(self.shared_optim, self.shared_lr)
+
+            self.stats_per_epoch()
         self.save_dag(self.best_evaluated_dag)
         logger.info(f'BEFORE RETRAINING BEST DAG:')
         logger.info(f'Best Dag: {self.best_evaluated_dag}')
         logger.info(f'Found in epoch: {self.best_epoch}')
         logger.info(f'With perplexity: {self.best_ppl}')
-        logger.info(f'AFTER RETRAINING BEST DAG:')
-        logger.info('>> Final evaluation: train_shared(2000, best_evaluated_dag)')
-        self.train_shared(2000, self.best_evaluated_dag)
-        logger.info('<< finished training best_evaluated_dag')
-        self.save_shared()
+        #logger.info(f'AFTER RETRAINING BEST DAG:')
+        #logger.info('>> Final evaluation: train_shared(2000, best_evaluated_dag)')
+        #self.train_shared(2000, self.best_evaluated_dag)
+        #logger.info('<< finished training best_evaluated_dag')
+        #self.save_shared()
         shared_train_time_variance = np.var(shared_train_times)
         logger.info(f'Shared Training time variance: {shared_train_time_variance}')
         controller_train_time_variance = np.var(controller_train_times)
         logger.info(f'Controller Training time variance: {controller_train_time_variance}')
         logger.info(f'shared train times: {shared_train_times}')
         logger.info(f'controller train times: {controller_train_times}')
+#        logger.info(f'Child forward times: {self.child_fwd_times_per_epoch}')
+#        logger.info(f'    max child fwd time in epoch: {self.child_fwd_times_per_epoch.index(max(self.child_fwd_times_per_epoch))}')
+#        logger.info(f'    max child fwd time: {max(self.child_fwd_times_per_epoch)}')
+#
+#        logger.info(f'    min child fwd time in epoch: {self.child_fwd_times_per_epoch.index(min(self.child_fwd_times_per_epoch))}')
+#        logger.info(f'    min child fwd time: {min(self.child_fwd_times_per_epoch)}')
+#        logger.info(f'    child fwd time variance: {np.var(self.child_fwd_times_per_epoch)}')
+        self.report_phases()
+        num_leaf_nodes = list(self.controller.num_leaf_nodes_dict.values())
+        #ave_leaf_nodes = np.mean(num_leaf_nodes)
+        #logger.info(f'Leaf Nodes ave: {ave_leaf_nodes}')
+        logger.info(f'Leaf Nodes histogram:')
+        num_leaves = list(self.controller.num_leaf_nodes_dict.keys())
+        num_leaves.sort()
+        for key in num_leaves:
+            logger.info(f'   {key}:{self.controller.num_leaf_nodes_dict[key]}')
 
 
     def get_loss(self, inputs, targets, hidden, dags):
@@ -304,17 +379,12 @@ class Trainer(object):
 
         loss = 0
         for dag in dags:
-            if self.args.prof_shared_fwd and not self.run_shared_fwd_once:
-                with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
-                    output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)
-                print("-"*64)
-                print("Profile Shared Forward")
-                print(prof)
-                print("-"*64)
-                self.run_shared_fwd_once = True
-            else:
-                output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)
+            shared_fwd_start_time = time.time()
+            output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)
 
+            shared_fwd_time = time.time()-shared_fwd_start_time
+            self.child_fwd_times.append(shared_fwd_time)
+            #logger.info(f'>>> Child forward time: {shared_fwd_time} <<<')
             output_flat = output.view(-1, self.dataset.num_tokens)
             sample_loss = (self.ce(output_flat, targets) /
                            self.args.shared_num_sample)
@@ -364,6 +434,7 @@ class Trainer(object):
             if step > max_step:
                 break
 
+            sample_start_time = time.time()
             if self.args.prof_sample and (not self.run_sample_once and train_idx > 5):
                 with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
                    dags = self.controller.sample(self.args.shared_num_sample)
@@ -374,6 +445,8 @@ class Trainer(object):
                 self.run_sample_once = True
             else:
                 dags = self.controller.sample(self.args.shared_num_sample)
+            sample_time = time.time() - sample_start_time
+            self.sample_times.append(sample_time)
                
             inputs, targets = self.get_batch(self.train_data,
                                              train_idx,
@@ -391,6 +464,7 @@ class Trainer(object):
             # update
             self.shared_optim.zero_grad()
 
+            shared_bp_start_time = time.time()
             if self.args.prof_shared_bp and (not self.run_shared_bp_once and train_idx > 5):
                 with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
                     loss.backward()
@@ -401,6 +475,8 @@ class Trainer(object):
                 self.run_shared_bp_once = True
             else:
                 loss.backward()
+            shared_bp_time = time.time() - shared_bp_start_time
+            self.child_bp_times.append(shared_bp_time)
 
             h1tohT = extra_out['hiddens']
             new_abs_max_hidden_norm = utils.to_item(
@@ -555,6 +631,7 @@ class Trainer(object):
             # update
             self.controller_optim.zero_grad()
 
+            ctrl_bp_start_time = time.time()
             if self.args.prof_ctrl_bp and (not self.run_ctrl_bp_once and step > 5):
                 with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
                     loss.backward()
@@ -565,6 +642,8 @@ class Trainer(object):
                 self.run_ctrl_bp_once = True
             else:
                 loss.backward()
+            ctrl_bp_time = time.time() - ctrl_bp_start_time
+            self.ctrl_bp_times.append(ctrl_bp_time)
 
             if self.args.controller_grad_clip > 0:
                 torch.nn.utils.clip_grad_norm(model.parameters(),

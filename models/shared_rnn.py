@@ -9,6 +9,8 @@ from torch.autograd import Variable
 
 import models.shared_base
 import utils
+import time
+import os
 
 
 logger = utils.get_logger()
@@ -190,8 +192,10 @@ class RNN(models.shared_base.SharedModel):
 
         self.reset_parameters()
         self.static_init_hidden = utils.keydefaultdict(self.init_hidden)
-
+        self.run_shared_fwd_once = False
         logger.info(f'# of parameters: {format(self.num_parameters, ",d")}')
+        self.child_fwd_times = []
+        self.profiled_dag = None
 
     def forward(self,  # pylint:disable=arguments-differ
                 inputs,
@@ -233,7 +237,26 @@ class RNN(models.shared_base.SharedModel):
         logits = []
         for step in range(time_steps):
             x_t = embed[step]
-            logit, hidden = self.cell(x_t, hidden, dag)
+
+            shared_fwd_start_time = time.time()
+            if self.args.prof_shared_fwd and not self.run_shared_fwd_once:
+                with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
+                    logit, hidden = self.cell(x_t, hidden, dag)
+                self.profiled_dag = dag
+                fname = ('profiled_child.png')
+                path = os.path.join(self.args.model_dir, 'networks', fname)
+                utils.draw_network(dag, path)
+
+                print("-"*64)
+                print("Profile Shared Forward")
+                print(prof)
+                print("-"*64)
+                self.run_shared_fwd_once = True
+            else:
+                logit, hidden = self.cell(x_t, hidden, dag)
+            shared_fwd_time = time.time()-shared_fwd_start_time
+            self.child_fwd_times.append(shared_fwd_time)
+
 
             hidden_norms = hidden.norm(dim=-1)
             max_norm = 25.0
