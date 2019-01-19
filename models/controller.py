@@ -90,6 +90,7 @@ class Controller(torch.nn.Module):
         self.run_fwd_once = False
         self.forward_evals = 0
         self.ctrl_fwd_times = []
+        self.sample_times = []
         self.num_leaf_nodes_dict = {}
         if self.args.network_type == 'rnn':
             # NOTE(brendan): `num_tokens` here is just the activation function
@@ -151,19 +152,21 @@ class Controller(torch.nn.Module):
         else:
             embed = inputs
 
-        ctrl_fwd_start_time = time.time()
-        if self.args.prof_ctrl_fwd and not self.run_fwd_once:
-            with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
+        #ctrl_fwd_start_time = time.time()
+        with utils.Timer(self.ctrl_fwd_times) as timer:
+            if self.args.prof_ctrl_fwd and not self.run_fwd_once:
+                with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
+                    hx, cx = self.lstm(embed, hidden)
+                print("-"*64)
+                print("Profile Controller Forward LSTM eval: ---------------------------")
+                print(prof)
+                prof.export_chrome_trace("prof_ctlr_fwd.trace")
+                print("-"*64)
+                self.run_fwd_once = True
+            else:
                 hx, cx = self.lstm(embed, hidden)
-            print("-"*64)
-            print("Profile Controller Forward LSTM eval: ---------------------------")
-            print(prof)
-            print("-"*64)
-            self.run_fwd_once = True
-        else:
-            hx, cx = self.lstm(embed, hidden)
-        ctrl_fwd_time = time.time() - ctrl_fwd_start_time
-        self.ctrl_fwd_times.append(ctrl_fwd_time)
+            #ctrl_fwd_time = time.time() - ctrl_fwd_start_time
+            #self.ctrl_fwd_times.append(ctrl_fwd_time)
 
         logits = self.decoders[block_idx](hx)
         logits /= self.args.softmax_temperature

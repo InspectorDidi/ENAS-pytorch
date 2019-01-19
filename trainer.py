@@ -96,7 +96,7 @@ def _check_abs_max_grad(abs_max_grad, model):
 
     new_abs_max_grad = max(new_max_grad, abs(new_min_grad))
     if new_abs_max_grad > abs_max_grad:
-        logger.info(f'abs max grad {abs_max_grad}')
+        logger.debug(f'abs max grad {abs_max_grad}')
         return new_abs_max_grad
 
     return abs_max_grad
@@ -138,12 +138,15 @@ class Trainer(object):
         self.child_fwd_times_per_epoch = []
         self.child_bp_times  = []
         self.child_bp_times_per_epoch  = []
-        self.ctrl_fwd_times  = []
+        #self.ctrl_fwd_times  = []
         self.ctrl_fwd_times_per_epoch  = []
         self.ctrl_bp_times   = []
         self.ctrl_bp_times_per_epoch   = []
         self.sample_times    = []
         self.sample_times_per_epoch    = []
+        self.child_full_fwd_times_per_epoch = []
+        self.fwd_get_loss_times = []
+        self.fwd_get_loss_times_per_epoch = []
 
         logger.info('regularizing:')
         for regularizer in [('activation regularization',
@@ -219,48 +222,68 @@ class Trainer(object):
 
     def stats_per_epoch(self):
         #TODO: use per_epoch_times in for loop:
+
         per_epoch_times = [(self.child_fwd_times_per_epoch,self.shared.child_fwd_times),
                            (self.child_bp_times_per_epoch, self.child_bp_times),
                            (self.ctrl_fwd_times_per_epoch, self.controller.ctrl_fwd_times),
                            (self.ctrl_bp_times_per_epoch, self.ctrl_bp_times),
                            (self.sample_times_per_epoch, self.sample_times) ]
 
-        self.child_fwd_times_per_epoch.append(np.mean(self.shared.child_fwd_times))
+        self.child_fwd_times_per_epoch.append((np.mean(self.shared.child_fwd_times),sum(self.shared.child_fwd_times)))
+        logger.info(f'child fwd #runs in epoch: {len(self.shared.child_fwd_times)}')
         self.shared.child_fwd_times = []
-        self.child_bp_times_per_epoch.append(np.mean(self.child_bp_times))
+        self.child_bp_times_per_epoch.append((np.mean(self.child_bp_times),sum(self.child_bp_times)))
+        logger.info(f'child bp  #runs in epoch: {len(self.child_bp_times)}')
         self.child_bp_times = []
-        self.ctrl_fwd_times_per_epoch.append(np.mean(self.controller.ctrl_fwd_times))
-        self.ctrl_fwd_times = []
-        self.ctrl_bp_times_per_epoch.append(np.mean(self.ctrl_bp_times))
+        self.ctrl_fwd_times_per_epoch.append((np.mean(self.controller.ctrl_fwd_times),sum(self.controller.ctrl_fwd_times)))
+        logger.info(f'ctrl fwd #runs in epoch: {len(self.controller.ctrl_fwd_times)}')
+        self.controller.ctrl_fwd_times = []
+        self.ctrl_bp_times_per_epoch.append((np.mean(self.ctrl_bp_times),sum(self.ctrl_bp_times)))
+        logger.info(f'ctrl bp #runs in epoch: {len(self.ctrl_bp_times)}')
         self.ctrl_bp_times = []
-        self.sample_times_per_epoch.append(np.mean(self.sample_times))
+        self.sample_times_per_epoch.append((np.mean(self.sample_times),sum(self.sample_times)))
+        logger.info(f'sample #runs in epoch: {len(self.sample_times )}')
         self.sample_times = []
+        if len(self.shared.full_forward_times) > 0:
+            self.child_full_fwd_times_per_epoch.append((np.mean(self.shared.full_forward_times),sum(self.shared.full_forward_times)))
+        logger.info(f'full foward #runs in epoch: {len(self.shared.full_forward_times)}')
+        self.shared.full_forward_times = []
+        self.fwd_get_loss_times_per_epoch.append((np.mean(self.fwd_get_loss_times),sum(self.fwd_get_loss_times)))
+        logger.info(f'fwd get_loss #runs in epoch: {len(self.fwd_get_loss_times)}' )
+        self.fwd_get_loss_times = []
 
     def report_phase(self, times_per_epoch, label):
-        logger.info(f'{label} times: {times_per_epoch}')
-        logger.info(f'    max {label} time in epoch#: {times_per_epoch.index(max(times_per_epoch))}')
-        logger.info(f'    max {label} time: {max(times_per_epoch)}')
-        logger.info(f'    min {label} time in epoch#: {times_per_epoch.index(min(times_per_epoch))}')
-        logger.info(f'    min {label} time: {min(times_per_epoch)}')
-        mean_time = np.mean(times_per_epoch)
+        ave_times_per_epoch = [x[0] for x in times_per_epoch]
+        total_times_per_epoch = [x[1] for x in times_per_epoch]
+        #logger.info(f'{label} times: {times_per_epoch}')
+        logger.info(f'{label} times: ')
+        #logger.info(f'    #runs in epoch: {len(times_per_epoch)}')
+        logger.info(f'    max {label} time in epoch#: {ave_times_per_epoch.index(max(ave_times_per_epoch))}')
+        logger.info(f'    max {label} time: {max(ave_times_per_epoch)}')
+        logger.info(f'    min {label} time in epoch#: {ave_times_per_epoch.index(min(ave_times_per_epoch))}')
+        logger.info(f'    min {label} time: {min(ave_times_per_epoch)}')
+        mean_time = np.mean(ave_times_per_epoch)
         logger.info(f'    ave {label} time: {mean_time}')
-        logger.info(f'    {label} time variance: {np.var(times_per_epoch)}')
+        logger.info(f'    {label} time variance: {np.var(ave_times_per_epoch)}')
+        logger.info(f'    ave total {label} time (entire epoch) {np.mean(total_times_per_epoch)}')
         return mean_time
 
     def report_phases(self):
-        per_epoch_times = [(self.child_fwd_times_per_epoch,'child fwd'),
+        print(f'{">"*30}EPOCH{"<"*30}')
+        per_epoch_times = [(self.child_fwd_times_per_epoch,'child fwd (cell)'),
+                           (self.child_full_fwd_times_per_epoch, 'child fwd (full)'),
                            (self.child_bp_times_per_epoch, 'child bp' ),
+                           (self.fwd_get_loss_times_per_epoch, 'child get_loss'),
                            (self.ctrl_fwd_times_per_epoch, 'ctrl fwd' ),
                            (self.ctrl_bp_times_per_epoch,  'ctrl bp'  ),
+
                            (self.sample_times_per_epoch,   'sample ') ]
         total_time = 0.0
         for times in per_epoch_times:
-            print(f'{"-"*30} {times[1]} {"-"*30}')
+            #print(f'{"-"*30} {times[1]} {"-"*30}')
             total_time += self.report_phase(times[0], times[1])
-        #logger.info(f'Total time for all phases (ave): {total_time}')
-        print("-"*60)
-
-
+        logger.info(f'Total time for all phases (ave): {total_time}')
+        print(f'{">"*30}>>=<<{"<"*30}')
 
     def train(self, single=False):
         """Cycles through alternately training the shared parameters and the
@@ -288,23 +311,23 @@ class Trainer(object):
             self.train_shared(self.args.shared_initial_step)
             self.train_controller()
 
+        self.shared.child_fwd_times = []
+        self.shared.full_forward_times = []
         for self.epoch in range(self.start_epoch, self.args.max_epoch):
             # 1. Training the shared parameters omega of the child models
-            start_time = time.time()
-            self.train_shared()
-            shared_train_time = time.time()-start_time
-            shared_train_times.append(shared_train_time)
-            logger.info(f'>>> train_shared() time: {shared_train_time} Epoch: {self.epoch}')
+            with utils.Timer(shared_train_times) as timer:
+                self.train_shared()
+            logger.info(f'>>> train_shared() time: {timer.interval} sec in Epoch: {self.epoch}')
+            logger.info(f'>>> Child forward (cell) run for a total of {len(self.shared.child_fwd_times)} in phase 1')
+            logger.info(f'>>> Child forward (full) run for a total of {len(self.shared.full_forward_times)} in phase 1')
 
             # 2. Training the controller parameters theta
             if not single:
-                start_time = time.time()
-                self.train_controller()
-                controller_train_time = time.time()-start_time
-                controller_train_times.append(controller_train_time)
-                logger.info(f'>>> train_controller() time: {shared_train_time} Epoch: {self.epoch}')
+                with utils.Timer(controller_train_times) as tmr:
+                    self.train_controller()
+                logger.info(f'>>> train_controller() time: {tmr.interval} sec in Epoch: {self.epoch}')
 
-            if self.epoch % self.args.save_epoch == 0:
+            if False: #self.epoch % self.args.save_epoch == 0: #Don't do this during timing
                 with _get_no_grad_ctx_mgr():
                     best_dag = dag if dag else self.derive()
                     loss, ppl = self.evaluate(self.eval_data,
@@ -331,9 +354,16 @@ class Trainer(object):
 
             if self.epoch >= self.args.shared_decay_after:
                 utils.update_lr(self.shared_optim, self.shared_lr)
-
+            logger.info(f'Child forward (cell) run for a total of {len(self.shared.child_fwd_times)} per epoch')
+            logger.info(f'Child forward (full) run for a total of {len(self.shared.full_forward_times)} per epoch')
+            logger.info(f'Child backprop run for a total of {len(self.child_bp_times)} per epoch')
+            logger.info(f'Controller forward run for a total of {len(self.controller.ctrl_fwd_times)} per epoch')
+            logger.info(f'Controller backprop run for a total of {len(self.ctrl_bp_times)} per epoch')
+            logger.info(f'Sample run for a total of {len(self.sample_times)} per epoch')
             self.stats_per_epoch()
+            
         self.save_dag(self.best_evaluated_dag)
+
         logger.info(f'BEFORE RETRAINING BEST DAG:')
         logger.info(f'Best Dag: {self.best_evaluated_dag}')
         logger.info(f'Found in epoch: {self.best_epoch}')
@@ -344,18 +374,17 @@ class Trainer(object):
         #logger.info('<< finished training best_evaluated_dag')
         #self.save_shared()
         shared_train_time_variance = np.var(shared_train_times)
+        shared_train_time_ave = np.mean(shared_train_times)
+        print(f'{"-"*30} TIME REPORTS {"-"*30}')
+        logger.info(f'Shared Training time ave: {shared_train_time_ave}')
         logger.info(f'Shared Training time variance: {shared_train_time_variance}')
+        print(f'Shared Train Times: {shared_train_times}')
         controller_train_time_variance = np.var(controller_train_times)
+        controller_train_time_ave = np.mean(controller_train_times)
+        logger.info(f'Controller Training time ave: {controller_train_time_ave}')
         logger.info(f'Controller Training time variance: {controller_train_time_variance}')
-        logger.info(f'shared train times: {shared_train_times}')
-        logger.info(f'controller train times: {controller_train_times}')
-#        logger.info(f'Child forward times: {self.child_fwd_times_per_epoch}')
-#        logger.info(f'    max child fwd time in epoch: {self.child_fwd_times_per_epoch.index(max(self.child_fwd_times_per_epoch))}')
-#        logger.info(f'    max child fwd time: {max(self.child_fwd_times_per_epoch)}')
-#
-#        logger.info(f'    min child fwd time in epoch: {self.child_fwd_times_per_epoch.index(min(self.child_fwd_times_per_epoch))}')
-#        logger.info(f'    min child fwd time: {min(self.child_fwd_times_per_epoch)}')
-#        logger.info(f'    child fwd time variance: {np.var(self.child_fwd_times_per_epoch)}')
+        print(f'Controller Train Times: {controller_train_times}')
+        print(f'Child forward times: {self.child_full_fwd_times_per_epoch}')
         self.report_phases()
         num_leaf_nodes = list(self.controller.num_leaf_nodes_dict.values())
         #ave_leaf_nodes = np.mean(num_leaf_nodes)
@@ -379,11 +408,11 @@ class Trainer(object):
 
         loss = 0
         for dag in dags:
-            shared_fwd_start_time = time.time()
+            #shared_fwd_start_time = time.time()
             output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)
 
-            shared_fwd_time = time.time()-shared_fwd_start_time
-            self.child_fwd_times.append(shared_fwd_time)
+            #shared_fwd_time = time.time()-shared_fwd_start_time
+            #self.child_fwd_times.append(shared_fwd_time)
             #logger.info(f'>>> Child forward time: {shared_fwd_time} <<<')
             output_flat = output.view(-1, self.dataset.num_tokens)
             sample_loss = (self.ce(output_flat, targets) /
@@ -431,31 +460,32 @@ class Trainer(object):
         train_idx = 0
         # TODO(brendan): Why - 1 - 1?
         while train_idx < self.train_data.size(0) - 1 - 1:
-            if step > max_step:
+            if step > max_step: #this should probably be step >= max_step
                 break
 
-            sample_start_time = time.time()
-            if self.args.prof_sample and (not self.run_sample_once and train_idx > 5):
-                with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
-                   dags = self.controller.sample(self.args.shared_num_sample)
-                print("-"*64)
-                print("Profile Controller Sample")
-                print(prof)
-                print("-"*64)
-                self.run_sample_once = True
-            else:
-                dags = self.controller.sample(self.args.shared_num_sample)
-            sample_time = time.time() - sample_start_time
-            self.sample_times.append(sample_time)
+            with utils.Timer(self.sample_times) as tmr:
+                if self.args.prof_sample and (not self.run_sample_once and train_idx > 5):
+                    with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
+                       dags = self.controller.sample(self.args.shared_num_sample)
+                    print("-"*64)
+                    print("Profile Controller Sample")
+                    print(prof)
+                    prof.export_chrome_trace("prof_sample.trace")
+                    print("-"*64)
+                    self.run_sample_once = True
+                else:
+                    dags = self.controller.sample(self.args.shared_num_sample)
+
                
             inputs, targets = self.get_batch(self.train_data,
                                              train_idx,
                                              self.max_length)
 
-            loss, hidden, extra_out = self.get_loss(inputs,
-                                                    targets,
-                                                    hidden,
-                                                    dags)
+            with utils.Timer(self.fwd_get_loss_times) as timr:
+                loss, hidden, extra_out = self.get_loss(inputs,
+                                                        targets,
+                                                        hidden,
+                                                        dags)
             hidden.detach_()
             raw_total_loss += loss.data
 
@@ -465,29 +495,40 @@ class Trainer(object):
             self.shared_optim.zero_grad()
 
             shared_bp_start_time = time.time()
-            if self.args.prof_shared_bp and (not self.run_shared_bp_once and train_idx > 5):
-                with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
+            with utils.Timer(self.child_bp_times) as tmr:
+                if self.args.prof_shared_bp and (not self.run_shared_bp_once and train_idx > 5):
+                    with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
+                        loss.backward()
+                        h1tohT = extra_out['hiddens']
+                        new_abs_max_hidden_norm = utils.to_item(
+                            h1tohT.norm(dim=-1).data.max())
+                        if new_abs_max_hidden_norm > abs_max_hidden_norm:
+                            abs_max_hidden_norm = new_abs_max_hidden_norm
+                            #logger.info(f'max hidden {abs_max_hidden_norm}')
+                        abs_max_grad = _check_abs_max_grad(abs_max_grad, model)
+                        torch.nn.utils.clip_grad_norm(model.parameters(),
+                                                    self.args.shared_grad_clip)
+                        self.shared_optim.step()
+                    print("-"*64)
+                    print("Profile Shared Back prop: ")
+                    print(prof)
+                    prof.export_chrome_trace("prof_child_bp.trace")
+                    print("-"*64)
+                    self.run_shared_bp_once = True
+                else:
                     loss.backward()
-                print("-"*64)
-                print("Profile Shared Back prop: ")
-                print(prof)
-                print("-"*64)
-                self.run_shared_bp_once = True
-            else:
-                loss.backward()
-            shared_bp_time = time.time() - shared_bp_start_time
-            self.child_bp_times.append(shared_bp_time)
+                    h1tohT = extra_out['hiddens']
+                    new_abs_max_hidden_norm = utils.to_item(
+                        h1tohT.norm(dim=-1).data.max())
+                    if new_abs_max_hidden_norm > abs_max_hidden_norm:
+                        abs_max_hidden_norm = new_abs_max_hidden_norm
+                        #logger.info(f'max hidden {abs_max_hidden_norm}')
+                    abs_max_grad = _check_abs_max_grad(abs_max_grad, model)
+                    torch.nn.utils.clip_grad_norm(model.parameters(),
+                                                self.args.shared_grad_clip)
+                    self.shared_optim.step()
 
-            h1tohT = extra_out['hiddens']
-            new_abs_max_hidden_norm = utils.to_item(
-                h1tohT.norm(dim=-1).data.max())
-            if new_abs_max_hidden_norm > abs_max_hidden_norm:
-                abs_max_hidden_norm = new_abs_max_hidden_norm
-                logger.info(f'max hidden {abs_max_hidden_norm}')
-            abs_max_grad = _check_abs_max_grad(abs_max_grad, model)
-            torch.nn.utils.clip_grad_norm(model.parameters(),
-                                          self.args.shared_grad_clip)
-            self.shared_optim.step()
+
 
             total_loss += loss.data
 
@@ -581,9 +622,10 @@ class Trainer(object):
         # train the controller LSTM for 2000 steps:
         for step in range(self.args.controller_max_step):
             # sample models
-            dags, log_probs, entropies = self.controller.sample(
+            with utils.Timer(self.sample_times) as timer:
+                dags, log_probs, entropies = self.controller.sample(
 #                                         batch_size=self.args.policy_batch_size,
-                                         with_details=True)
+                                             with_details=True)
             #dags now contians 1 dag
             #log_probs.size() is 23 
 
@@ -631,25 +673,28 @@ class Trainer(object):
             # update
             self.controller_optim.zero_grad()
 
-            ctrl_bp_start_time = time.time()
-            if self.args.prof_ctrl_bp and (not self.run_ctrl_bp_once and step > 5):
-                with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
+            with utils.Timer(self.ctrl_bp_times) as tmr:
+                if self.args.prof_ctrl_bp and (not self.run_ctrl_bp_once and step > 5):
+                    with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
+                        loss.backward()
+                        if self.args.controller_grad_clip > 0:
+                            torch.nn.utils.clip_grad_norm(model.parameters(),
+                                                        self.args.controller_grad_clip)
+                        #parameters updated here:                                      
+                        self.controller_optim.step()
+                    print("-"*64)
+                    print("Profile Controller Back prop: ---------------------------")
+                    print(prof.table(sort_by="cpu_time"))
+                    prof.export_chrome_trace("prof_ctrl_bp.trace")
+                    print("-"*64)
+                    self.run_ctrl_bp_once = True
+                else:
                     loss.backward()
-                print("-"*64)
-                print("Profile Controller Back prop: ---------------------------")
-                print(prof)
-                print("-"*64)
-                self.run_ctrl_bp_once = True
-            else:
-                loss.backward()
-            ctrl_bp_time = time.time() - ctrl_bp_start_time
-            self.ctrl_bp_times.append(ctrl_bp_time)
-
-            if self.args.controller_grad_clip > 0:
-                torch.nn.utils.clip_grad_norm(model.parameters(),
-                                              self.args.controller_grad_clip)
-            #parameters updated here:                                      
-            self.controller_optim.step()
+                    if self.args.controller_grad_clip > 0:
+                        torch.nn.utils.clip_grad_norm(model.parameters(),
+                                                    self.args.controller_grad_clip)
+                    #parameters updated here:                                      
+                    self.controller_optim.step()
 
             total_loss += utils.to_item(loss.data)
 

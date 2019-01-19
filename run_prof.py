@@ -97,12 +97,20 @@ def process_profs(outstr,filenm=None):
                 if fields[0] == "================================================================":
                     break #done, don't look at anymore lines
                 funcname = fields[0]
-                cputime  = fields[4]
-                cputime  = non_decimal.sub('',cputime)
-                cputime  = float(cputime)
-                cudatime = fields[5]
-                cudatime = float(non_decimal.sub('', cudatime))
-                print(f'funcname: {funcname} at line: {cnt} cputime: {cputime}')
+                if not fields[1][0].isdigit() : #unsigned short case
+                    funcname = f"{funcname} {fields[1]}"
+                    cputime  = fields[5]
+                    cputime  = non_decimal.sub('',cputime)
+                    cputime  = float(cputime)
+                    cudatime = fields[6]
+                    cudatime = float(non_decimal.sub('', cudatime))
+                else:
+                    cputime  = fields[4]
+                    cputime  = non_decimal.sub('',cputime)
+                    cputime  = float(cputime)
+                    cudatime = fields[5]
+                    cudatime = float(non_decimal.sub('', cudatime))
+                #print(f'funcname: {funcname} at line: {cnt} cputime: {cputime}')
             except ValueError:
                 continue
             except IndexError:

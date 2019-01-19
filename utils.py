@@ -6,12 +6,16 @@ from datetime import datetime
 import os
 import json
 import logging
+import time
 
 import numpy as np
 import pygraphviz as pgv
 
 import torch
 from torch.autograd import Variable
+
+from contextlib import ContextDecorator
+
 
 #from PIL import Image
 #from PIL import ImageFont
@@ -29,6 +33,19 @@ except:
 #    imresize = cv2.imresize
 #    imsave = imwrite = cv2.imwrite
 
+class Timer(ContextDecorator):
+    def __init__(self, lst):
+        self.list = lst
+
+    def __enter__(self):
+        self.start = time.time()
+        self.interval = 0.0
+        return self
+
+    def __exit__(self, *args):
+        self.end = time.time()
+        self.interval = self.end - self.start
+        self.list.append(self.interval)
 
 ##########################
 # Network visualization

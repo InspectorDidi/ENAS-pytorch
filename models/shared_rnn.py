@@ -135,12 +135,14 @@ class LockedDropout(nn.Module):
 
 class RNN(models.shared_base.SharedModel):
     """Shared RNN model."""
+    #full_forward_times = []
     def __init__(self, args, corpus):
         models.shared_base.SharedModel.__init__(self)
 
         self.args = args
         self.corpus = corpus
         self.forward_eval = 0
+        self.full_forward_times = []
 
         self.decoder = nn.Linear(args.shared_hid, corpus.num_tokens)
         self.encoder = EmbeddingDropout(corpus.num_tokens,
@@ -202,116 +204,120 @@ class RNN(models.shared_base.SharedModel):
                 dag,
                 hidden=None,
                 is_train=True):
-        time_steps = inputs.size(0)
-        batch_size = inputs.size(1)
+        with utils.Timer(self.full_forward_times) as t:
+            time_steps = inputs.size(0) #35
+            batch_size = inputs.size(1) #64
 
-        is_train = is_train and self.args.mode in ['train']
+            is_train = is_train and self.args.mode in ['train']
 
-        self.w_hh = _get_dropped_weights(self.w_hh_raw,
-                                         self.args.shared_wdrop,
-                                         self.training)
-        self.w_hc = _get_dropped_weights(self.w_hc_raw,
-                                         self.args.shared_wdrop,
-                                         self.training)
+            self.w_hh = _get_dropped_weights(self.w_hh_raw, #[1000,1000]
+                                            self.args.shared_wdrop,
+                                            self.training)
+            self.w_hc = _get_dropped_weights(self.w_hc_raw, #[1000,1000]
+                                            self.args.shared_wdrop,
+                                            self.training)
 
-        if hidden is None:
-            hidden = self.static_init_hidden[batch_size]
+            if hidden is None:
+                hidden = self.static_init_hidden[batch_size]
 
-        embed = self.encoder(inputs)
+            embed = self.encoder(inputs)
 
-        if self.args.shared_dropouti > 0:
-            embed = self.lockdrop(embed,
-                                  self.args.shared_dropouti if is_train else 0)
+            if self.args.shared_dropouti > 0:
+                embed = self.lockdrop(embed,
+                                    self.args.shared_dropouti if is_train else 0)
 
-        # TODO(brendan): The norm of hidden states are clipped here because
-        # otherwise ENAS is especially prone to exploding activations on the
-        # forward pass. This could probably be fixed in a more elegant way, but
-        # it might be exposing a weakness in the ENAS algorithm as currently
-        # proposed.
-        #
-        # For more details, see
-        # https://github.com/carpedm20/ENAS-pytorch/issues/6
-        clipped_num = 0
-        max_clipped_norm = 0
-        h1tohT = []
-        logits = []
-        for step in range(time_steps):
-            x_t = embed[step]
+            # embed.size() -> [35,64,1000]
+            # TODO(brendan): The norm of hidden states are clipped here because
+            # otherwise ENAS is especially prone to exploding activations on the
+            # forward pass. This could probably be fixed in a more elegant way, but
+            # it might be exposing a weakness in the ENAS algorithm as currently
+            # proposed.
+            #
+            # For more details, see
+            # https://github.com/carpedm20/ENAS-pytorch/issues/6
+            clipped_num = 0
+            max_clipped_norm = 0
+            h1tohT = []
+            logits = []
+            for step in range(time_steps): #the 35 steps
+                x_t = embed[step]
 
-            shared_fwd_start_time = time.time()
-            if self.args.prof_shared_fwd and not self.run_shared_fwd_once:
-                with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
-                    logit, hidden = self.cell(x_t, hidden, dag)
-                self.profiled_dag = dag
-                fname = ('profiled_child.png')
-                path = os.path.join(self.args.model_dir, 'networks', fname)
-                utils.draw_network(dag, path)
+                #shared_fwd_start_time = time.time()
+                with utils.Timer(self.child_fwd_times) as timer:
+                    if self.args.prof_shared_fwd and not self.run_shared_fwd_once:
+                        with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
+                            logit, hidden = self.cell(x_t, hidden, dag)
+                        self.profiled_dag = dag
+                        fname = ('profiled_child.png')
+                        #path = os.path.join(self.args.model_dir, 'networks', fname)
+                        path = os.path.join('profiled_networks', fname)
+                        utils.draw_network(dag, path)
+                        print("-"*64)
+                        print("Profile Shared Forward")
+                        print(prof)
+                        prof.export_chrome_trace("prof_shared_fwd.trace")
+                        print("-"*64)
+                        self.run_shared_fwd_once = True
+                    else:
+                        logit, hidden = self.cell(x_t, hidden, dag)
+                #shared_fwd_time = time.time()-shared_fwd_start_time
+                #self.child_fwd_times.append(shared_fwd_time)
 
-                print("-"*64)
-                print("Profile Shared Forward")
-                print(prof)
-                print("-"*64)
-                self.run_shared_fwd_once = True
-            else:
-                logit, hidden = self.cell(x_t, hidden, dag)
-            shared_fwd_time = time.time()-shared_fwd_start_time
-            self.child_fwd_times.append(shared_fwd_time)
 
+                hidden_norms = hidden.norm(dim=-1)
+                max_norm = 25.0
+                if hidden_norms.data.max() > max_norm:
+                    # TODO(brendan): Just directly use the torch slice operations
+                    # in PyTorch v0.4.
+                    #
+                    # This workaround for PyTorch v0.3.1 does everything in numpy,
+                    # because the PyTorch slicing and slice assignment is too
+                    # flaky.
+                    hidden_norms = hidden_norms.data.cpu().numpy()
 
-            hidden_norms = hidden.norm(dim=-1)
-            max_norm = 25.0
-            if hidden_norms.data.max() > max_norm:
-                # TODO(brendan): Just directly use the torch slice operations
-                # in PyTorch v0.4.
-                #
-                # This workaround for PyTorch v0.3.1 does everything in numpy,
-                # because the PyTorch slicing and slice assignment is too
-                # flaky.
-                hidden_norms = hidden_norms.data.cpu().numpy()
+                    clipped_num += 1
+                    if hidden_norms.max() > max_clipped_norm:
+                        max_clipped_norm = hidden_norms.max()
 
-                clipped_num += 1
-                if hidden_norms.max() > max_clipped_norm:
-                    max_clipped_norm = hidden_norms.max()
+                    clip_select = hidden_norms > max_norm
+                    clip_norms = hidden_norms[clip_select]
 
-                clip_select = hidden_norms > max_norm
-                clip_norms = hidden_norms[clip_select]
+                    mask = np.ones(hidden.size())
+                    normalizer = max_norm/clip_norms
+                    normalizer = normalizer[:, np.newaxis]
 
-                mask = np.ones(hidden.size())
-                normalizer = max_norm/clip_norms
-                normalizer = normalizer[:, np.newaxis]
+                    mask[clip_select] = normalizer
+                    if self.args.cuda:
+                        hidden *= torch.autograd.Variable(
+                            torch.FloatTensor(mask).cuda(), requires_grad=False)
+                    else:
+                        hidden *= torch.autograd.Variable(
+                            torch.FloatTensor(mask), requires_grad=False)
 
-                mask[clip_select] = normalizer
-                if self.args.cuda:
-                   hidden *= torch.autograd.Variable(
-                       torch.FloatTensor(mask).cuda(), requires_grad=False)
-                else:
-                   hidden *= torch.autograd.Variable(
-                       torch.FloatTensor(mask), requires_grad=False)
+                logits.append(logit)
+                h1tohT.append(hidden)
 
-            logits.append(logit)
-            h1tohT.append(hidden)
+            if clipped_num > 0:
+                logger.debug(f'clipped {clipped_num} hidden states in one forward '
+                            f'pass. '
+                            f'max clipped hidden state norm: {max_clipped_norm}')
 
-        if clipped_num > 0:
-            logger.info(f'clipped {clipped_num} hidden states in one forward '
-                        f'pass. '
-                        f'max clipped hidden state norm: {max_clipped_norm}')
+            h1tohT = torch.stack(h1tohT)
+            output = torch.stack(logits)
+            raw_output = output
+            if self.args.shared_dropout > 0:
+                output = self.lockdrop(output,
+                                    self.args.shared_dropout if is_train else 0)
 
-        h1tohT = torch.stack(h1tohT)
-        output = torch.stack(logits)
-        raw_output = output
-        if self.args.shared_dropout > 0:
-            output = self.lockdrop(output,
-                                   self.args.shared_dropout if is_train else 0)
+            dropped_output = output
 
-        dropped_output = output
+            decoded = self.decoder(
+                output.view(output.size(0)*output.size(1), output.size(2)))
+            decoded = decoded.view(output.size(0), output.size(1), decoded.size(1))
 
-        decoded = self.decoder(
-            output.view(output.size(0)*output.size(1), output.size(2)))
-        decoded = decoded.view(output.size(0), output.size(1), decoded.size(1))
-
-        extra_out = {'dropped': dropped_output,
-                     'hiddens': h1tohT,
-                     'raw': raw_output}
+            extra_out = {'dropped': dropped_output,
+                        'hiddens': h1tohT,
+                        'raw': raw_output}
         return decoded, hidden, extra_out
 
     def cell(self, x, h_prev, dag):
