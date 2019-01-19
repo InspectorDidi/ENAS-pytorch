@@ -6,7 +6,8 @@ trace_files = ['prof_child_fwd_trace',
                'prof_child_bp_trace',
                'prof_ctlr_fwd_trace',
                'prof_ctlr_bp_trace',
-               'prof_sample_trace'
+               'prof_sample_trace',
+               'prof_get_loss_trace'
               ]
 
 prof = importlib.import_module(sys.argv[1])

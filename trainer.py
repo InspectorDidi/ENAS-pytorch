@@ -122,6 +122,7 @@ class Trainer(object):
         self.run_ctrl_bp_once = False
         self.run_shared_bp_once = False
         self.run_sample_once = False
+        self.run_get_loss_prof_once = False
         self.args = args
         self.controller_step = 0
         self.cuda = args.cuda
@@ -482,10 +483,20 @@ class Trainer(object):
                                              self.max_length)
 
             with utils.Timer(self.fwd_get_loss_times) as timr:
-                loss, hidden, extra_out = self.get_loss(inputs,
-                                                        targets,
-                                                        hidden,
-                                                        dags)
+                if self.args.prof_get_loss and (not self.run_get_loss_prof_once and train_idx > 5):
+                    with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
+                        loss, hidden, extra_out = self.get_loss(inputs,
+                                                                targets,
+                                                                hidden,
+                                                                dags)
+                    self.run_get_loss_prof_once = True
+                    prof.export_chrome_trace("prof_get_loss_trace")
+                else:
+                    loss, hidden, extra_out = self.get_loss(inputs,
+                                                            targets,
+                                                            hidden,
+                                                            dags)
+
             hidden.detach_()
             raw_total_loss += loss.data
 
