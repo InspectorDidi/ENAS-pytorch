@@ -26,6 +26,7 @@ net_arg.add_argument('--prof_ctrl_fwd', type=str2bool, default=False)
 net_arg.add_argument('--prof_shared_fwd', type=str2bool, default=False)
 net_arg.add_argument('--prof_sample', type=str2bool, default=False)
 net_arg.add_argument('--prof_get_loss', type=str2bool, default=False)
+net_arg.add_argument('--prof_get_reward', type=str2bool, default=False)
 net_arg.add_argument('--prof_use_cuda', type=str2bool, default=False)
 
 # Controller

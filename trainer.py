@@ -148,6 +148,8 @@ class Trainer(object):
         self.child_full_fwd_times_per_epoch = []
         self.fwd_get_loss_times = []
         self.fwd_get_loss_times_per_epoch = []
+        self.get_reward_times = []
+        self.get_reward_times_per_epoch = []
 
         logger.info('regularizing:')
         for regularizer in [('activation regularization',
@@ -222,7 +224,7 @@ class Trainer(object):
             raise NotImplementedError('`num_gpu > 1` is in progress')
 
     def stats_per_epoch(self):
-        #TODO: use per_epoch_times in for loop:
+        #TODO: use per_epoch_times in for loop to refactor this mess:
 
         per_epoch_times = [(self.child_fwd_times_per_epoch,self.shared.child_fwd_times),
                            (self.child_bp_times_per_epoch, self.child_bp_times),
@@ -233,15 +235,19 @@ class Trainer(object):
         self.child_fwd_times_per_epoch.append((np.mean(self.shared.child_fwd_times),sum(self.shared.child_fwd_times)))
         logger.info(f'child fwd #runs in epoch: {len(self.shared.child_fwd_times)}')
         self.shared.child_fwd_times = []
+
         self.child_bp_times_per_epoch.append((np.mean(self.child_bp_times),sum(self.child_bp_times)))
         logger.info(f'child bp  #runs in epoch: {len(self.child_bp_times)}')
         self.child_bp_times = []
+
         self.ctrl_fwd_times_per_epoch.append((np.mean(self.controller.ctrl_fwd_times),sum(self.controller.ctrl_fwd_times)))
         logger.info(f'ctrl fwd #runs in epoch: {len(self.controller.ctrl_fwd_times)}')
         self.controller.ctrl_fwd_times = []
+
         self.ctrl_bp_times_per_epoch.append((np.mean(self.ctrl_bp_times),sum(self.ctrl_bp_times)))
         logger.info(f'ctrl bp #runs in epoch: {len(self.ctrl_bp_times)}')
         self.ctrl_bp_times = []
+
         self.sample_times_per_epoch.append((np.mean(self.sample_times),sum(self.sample_times)))
         logger.info(f'sample #runs in epoch: {len(self.sample_times )}')
         self.sample_times = []
@@ -249,9 +255,14 @@ class Trainer(object):
             self.child_full_fwd_times_per_epoch.append((np.mean(self.shared.full_forward_times),sum(self.shared.full_forward_times)))
         logger.info(f'full foward #runs in epoch: {len(self.shared.full_forward_times)}')
         self.shared.full_forward_times = []
+
         self.fwd_get_loss_times_per_epoch.append((np.mean(self.fwd_get_loss_times),sum(self.fwd_get_loss_times)))
         logger.info(f'fwd get_loss #runs in epoch: {len(self.fwd_get_loss_times)}' )
         self.fwd_get_loss_times = []
+
+        self.get_reward_times_per_epoch.append((np.mean(self.get_reward_times),sum(self.get_reward_times)))
+        logger.info(f'fwd get_reward #runs in epoch: {len(self.get_reward_times)}' )
+        self.get_reward_times = []
 
     def report_phase(self, times_per_epoch, label):
         ave_times_per_epoch = [x[0] for x in times_per_epoch]
@@ -277,7 +288,7 @@ class Trainer(object):
                            (self.fwd_get_loss_times_per_epoch, 'child get_loss'),
                            (self.ctrl_fwd_times_per_epoch, 'ctrl fwd' ),
                            (self.ctrl_bp_times_per_epoch,  'ctrl bp'  ),
-
+                           (self.get_reward_times_per_epoch,  'ctrl get_reward'),
                            (self.sample_times_per_epoch,   'sample ') ]
         total_time = 0.0
         for times in per_epoch_times:
@@ -321,12 +332,16 @@ class Trainer(object):
             logger.info(f'>>> train_shared() time: {timer.interval} sec in Epoch: {self.epoch}')
             logger.info(f'>>> Child forward (cell) run for a total of {len(self.shared.child_fwd_times)} in phase 1')
             logger.info(f'>>> Child forward (full) run for a total of {len(self.shared.full_forward_times)} in phase 1')
+            logger.info(f'>>> Child get_loss run for a total of {len(self.fwd_get_loss_times)} times in phase 1')
+            logger.info(f'>>> Child get_loss run for a total time of {sum(self.fwd_get_loss_times)} in phase 1')
+            logger.info(f'>>> Child back prop run for a total time of {sum(self.child_bp_times)} in phase 1')
 
             # 2. Training the controller parameters theta
             if not single:
                 with utils.Timer(controller_train_times) as tmr:
                     self.train_controller()
                 logger.info(f'>>> train_controller() time: {tmr.interval} sec in Epoch: {self.epoch}')
+                logger.info(f'>>> Ctlr get_reward run for a total of {len(self.get_reward_times)} times in phase 2')
 
             if False: #self.epoch % self.args.save_epoch == 0: #Don't do this during timing
                 with _get_no_grad_ctx_mgr():
@@ -355,12 +370,13 @@ class Trainer(object):
 
             if self.epoch >= self.args.shared_decay_after:
                 utils.update_lr(self.shared_optim, self.shared_lr)
-            logger.info(f'Child forward (cell) run for a total of {len(self.shared.child_fwd_times)} per epoch')
-            logger.info(f'Child forward (full) run for a total of {len(self.shared.full_forward_times)} per epoch')
-            logger.info(f'Child backprop run for a total of {len(self.child_bp_times)} per epoch')
-            logger.info(f'Controller forward run for a total of {len(self.controller.ctrl_fwd_times)} per epoch')
-            logger.info(f'Controller backprop run for a total of {len(self.ctrl_bp_times)} per epoch')
-            logger.info(f'Sample run for a total of {len(self.sample_times)} per epoch')
+            logger.info(f'Child forward (cell) run for a total of {len(self.shared.child_fwd_times)} times per epoch')
+            logger.info(f'Child forward (full) run for a total of {len(self.shared.full_forward_times)} times per epoch')
+            logger.info(f'Child backprop run for a total of {len(self.child_bp_times)} times per epoch')
+            logger.info(f'Controller forward run for a total of {len(self.controller.ctrl_fwd_times)} times per epoch')
+            logger.info(f'Controller backprop run for a total of {len(self.ctrl_bp_times)} times per epoch')
+            logger.info(f'Sample run for a total of {len(self.sample_times)} times per epoch')
+            logger.info(f'Ctlr get_reward run for a total of {len(self.get_reward_times)} times per epoch')
             self.stats_per_epoch()
             
         self.save_dag(self.best_evaluated_dag)
@@ -409,12 +425,8 @@ class Trainer(object):
 
         loss = 0
         for dag in dags:
-            #shared_fwd_start_time = time.time()
             output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)
 
-            #shared_fwd_time = time.time()-shared_fwd_start_time
-            #self.child_fwd_times.append(shared_fwd_time)
-            #logger.info(f'>>> Child forward time: {shared_fwd_time} <<<')
             output_flat = output.view(-1, self.dataset.num_tokens)
             sample_loss = (self.ce(output_flat, targets) /
                            self.args.shared_num_sample)
@@ -505,7 +517,6 @@ class Trainer(object):
             # update
             self.shared_optim.zero_grad()
 
-            shared_bp_start_time = time.time()
             with utils.Timer(self.child_bp_times) as tmr:
                 if self.args.prof_shared_bp and (not self.run_shared_bp_once and train_idx > 5):
                     with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
@@ -644,11 +655,12 @@ class Trainer(object):
             np_entropies = entropies.data.cpu().numpy()
             # NOTE(brendan): No gradients should be backpropagated to the
             # shared model during controller training, obviously.
-            with _get_no_grad_ctx_mgr():
-                rewards, hidden, _ = self.get_reward(dags,
-                                                  np_entropies,
-                                                  hidden,
-                                                  valid_idx)
+            with utils.Timer(self.get_reward_times) as tm:
+                with _get_no_grad_ctx_mgr():
+                    rewards, hidden, _ = self.get_reward(dags,
+                                                      np_entropies,
+                                                      hidden,
+                                                      valid_idx)
             # len(rewards) is 23
             # hidden.size() is [64,1000]
 
