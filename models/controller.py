@@ -89,8 +89,6 @@ class Controller(torch.nn.Module):
         self.args = args
         self.run_fwd_once = False
         self.forward_evals = 0
-        self.ctrl_fwd_times = []
-        self.sample_times = []
         self.num_leaf_nodes_dict = {}
         if self.args.network_type == 'rnn':
             # NOTE(brendan): `num_tokens` here is just the activation function
@@ -153,7 +151,8 @@ class Controller(torch.nn.Module):
             embed = inputs
 
         #ctrl_fwd_start_time = time.time()
-        with utils.Timer(self.ctrl_fwd_times) as timer:
+        #with utils.Timer(self.ctrl_fwd_times) as timer:
+        with utils.Timer(utils.time_tracker['ctrl fwd']['times']) as timer:
             if self.args.prof_ctrl_fwd and not self.run_fwd_once:
                 with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
                     hx, cx = self.lstm(embed, hidden)

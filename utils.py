@@ -33,6 +33,46 @@ except:
 #    imresize = cv2.imresize
 #    imsave = imwrite = cv2.imwrite
 
+phase_keys = ['child fwd (cell)', 'child fwd (full)', 'child bp', 'get_loss',
+                   'ctrl fwd', 'ctrl bp', 'ctrl get_reward', 'sample', 'train shared',
+                   'train controller' ]
+time_tracker = {}
+for key in phase_keys:
+    time_tracker[key] = {'times_per_epoch':[], 'times':[]} #(times_per_epoch_list, times_list)
+
+def report_num_runs():
+    for phase, lists in time_tracker.items():
+        logger.info(f'>>> {phase} #runs in epoch: {len(lists["times"])}')
+
+def stats_per_epoch():
+    for phase, lists in time_tracker.items():
+        lists['times_per_epoch'].append((np.mean(lists['times']), sum(lists['times'])))
+        logger.info(f'>>> {phase} #runs in epoch: {len(lists["times"])}')
+        lists['times'] = []
+
+def report_phase(times_per_epoch, label):
+    ave_times_per_epoch = [x[0] for x in times_per_epoch]
+    total_times_per_epoch = [x[1] for x in times_per_epoch]
+    #logger.info(f'{label} times: {times_per_epoch}')
+    logger.info(f'{label} times: ')
+    #logger.info(f'    #runs in epoch: {len(times_per_epoch)}')
+    logger.info(f'    max {label} time found in epoch#: {ave_times_per_epoch.index(max(ave_times_per_epoch))}')
+    logger.info(f'    max {label} time: {max(ave_times_per_epoch)}')
+    logger.info(f'    min {label} time in epoch#: {ave_times_per_epoch.index(min(ave_times_per_epoch))}')
+    logger.info(f'    min {label} time: {min(ave_times_per_epoch)}')
+    mean_time = np.mean(ave_times_per_epoch)
+    logger.info(f'    ave {label} time: {mean_time}')
+    logger.info(f'    {label} time variance: {np.var(ave_times_per_epoch)}')
+    logger.info(f'    ave total {label} time (entire epoch) {np.mean(total_times_per_epoch)}')
+    return mean_time
+
+def report_phases():
+    logger.info(f'{">"*30}EPOCH{"<"*30}')
+    for phase, lists in time_tracker.items():
+        report_phase(lists['times_per_epoch'], phase)
+    logger.info(f'{">"*30}>>=<<{"<"*30}')
+
+
 class Timer(ContextDecorator):
     def __init__(self, lst):
         self.list = lst

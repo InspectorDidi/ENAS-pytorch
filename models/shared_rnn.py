@@ -7,8 +7,8 @@ from torch import nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-import models.shared_base
 import utils
+import models.shared_base
 import time
 import os
 
@@ -142,7 +142,6 @@ class RNN(models.shared_base.SharedModel):
         self.args = args
         self.corpus = corpus
         self.forward_eval = 0
-        self.full_forward_times = []
 
         self.decoder = nn.Linear(args.shared_hid, corpus.num_tokens)
         self.encoder = EmbeddingDropout(corpus.num_tokens,
@@ -204,7 +203,8 @@ class RNN(models.shared_base.SharedModel):
                 dag,
                 hidden=None,
                 is_train=True):
-        with utils.Timer(self.full_forward_times) as t:
+        #with utils.Timer(self.full_forward_times) as t:
+        with utils.Timer(utils.time_tracker['child fwd (full)']['times']) as t:
             time_steps = inputs.size(0) #35
             batch_size = inputs.size(1) #64
 
@@ -243,7 +243,8 @@ class RNN(models.shared_base.SharedModel):
                 x_t = embed[step]
 
                 #shared_fwd_start_time = time.time()
-                with utils.Timer(self.child_fwd_times) as timer:
+                #with utils.Timer(self.child_fwd_times) as timer:
+                with utils.Timer(utils.time_tracker['child fwd (cell)']['times']) as timer:
                     if self.args.prof_shared_fwd and not self.run_shared_fwd_once:
                         with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
                             logit, hidden = self.cell(x_t, hidden, dag)
