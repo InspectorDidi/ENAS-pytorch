@@ -123,6 +123,7 @@ class Trainer(object):
         self.run_shared_bp_once = False
         self.run_sample_once = False
         self.run_get_loss_prof_once = False
+        self.run_get_reward_once = False
         self.args = args
         self.controller_step = 0
         self.cuda = args.cuda
@@ -572,11 +573,21 @@ class Trainer(object):
             # shared model during controller training, obviously.
             #with utils.Timer(self.get_reward_times) as tm:
             with utils.Timer(utils.time_tracker['ctrl get_reward']['times']) as tm:
-                with _get_no_grad_ctx_mgr():
+                #with _get_no_grad_ctx_mgr():
+                if self.args.prof_get_reward and (not self.run_get_reward_once and step > 5):
+                    with torch.autograd.profiler.profile(use_cuda=self.args.prof_use_cuda) as prof:
+                        rewards, hidden, _ = self.get_reward(dags,
+                                                          np_entropies,
+                                                          hidden,
+                                                          valid_idx)
+                    self.run_get_reward_once = True
+                    prof.export_chrome_trace("prof_get_reward.trace")
+                else:
                     rewards, hidden, _ = self.get_reward(dags,
                                                       np_entropies,
                                                       hidden,
                                                       valid_idx)
+
             # len(rewards) is 23
             # hidden.size() is [64,1000]
 
