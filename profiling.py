@@ -7,10 +7,11 @@ trace_files = ['prof_child_fwd_trace',
                'prof_ctlr_fwd_trace',
                'prof_ctlr_bp_trace',
                'prof_sample_trace',
-               'prof_get_loss_trace'
+               'prof_get_loss_trace',
+               'prof_get_reward_trace'
               ]
 
-prof = importlib.import_module(sys.argv[1])
+#prof = importlib.import_module(sys.argv[1])
 
 #based on chrome trace format
 # {"name": "unsigned short", "ph": "X", "ts": 86.114, "dur": 13.083999999999989, 
@@ -79,6 +80,8 @@ class ScanList(list):
 
 
 def report_prof(prof_name):
+    pyfile = open(f'{prof_name}_.py','w')
+    pyfile.write("profile=[")
     print("-"*80)
     prof_rpt_name = " ".join(prof_name.split("_")[1:-1])
     print(f'Profile for {prof_rpt_name} sorted by total CPU time')
@@ -100,10 +103,13 @@ def report_prof(prof_name):
 
     for func_name, func_stat in sorted(list(ScanList.toplevel.items()), key=lambda x: x[1].duration):
         print(f'{func_name:{longest_func_name}}: total CPU time {func_stat.duration:.2f}us, #calls: {func_stat.num_calls}, time/call:{func_stat.duration/func_stat.num_calls:.2f}us')
+        pyfile.write(f'("{func_name}",{{"time":{func_stat.duration},"calls":{func_stat.num_calls} }}),')
         all_cpu_time += func_stat.duration
     print(f'\nTotal Time for {prof_rpt_name}: {all_cpu_time} us' )
     print("-"*80)
     print()
+    pyfile.write("]")
+    pyfile.close()
 
 
 for trace_file in trace_files:
