@@ -47,15 +47,21 @@ class FuncStat(object):
         self.num_calls += 1
 
 class ScanList(list):
-    toplevel ={}
+    def __init__(self):
+        self.toplevel = {}
+        self.child_list = None
+        super().__init__()
+        self.scanlist = None
+
     def _remove_to_toplevel(self, item):
         self.remove(item)
         #print(f"Removing {item.name}")
         if(not item.contained):
-            if item.name in ScanList.toplevel:
-                ScanList.toplevel[item.name].add(item.dur)
+            #if item.name in ScanList.toplevel:
+            if item.name in self.toplevel:
+                self.toplevel[item.name].add(item.dur)
             else:
-                ScanList.toplevel[item.name] = FuncStat(item.name, item.dur)
+                self.toplevel[item.name] = FuncStat(item.name, item.dur)
 
     def finalize(self):
         for item in self:
@@ -74,13 +80,16 @@ class ScanList(list):
                 #print(f' ---> {item.name} contains {interval.name}')
             
         super().append(interval)
+
         
 # {"name": "unsigned short", "ph": "X", "ts": 86.114, "dur": 13.083999999999989, 
 #  "tid": 0, "pid": "CPU functions", "args": {}}
 
 
 def report_prof(prof_name):
-    pyfile = open(f'{prof_name}_.py','w')
+    pyprof_outfile = f'{prof_name}_.py'
+    pyfile = open(pyprof_outfile,'w')
+    print(f'import file: {prof_name}, pyprof_outfile: {pyprof_outfile}')
     pyfile.write("profile=[")
     print("-"*80)
     prof_rpt_name = " ".join(prof_name.split("_")[1:-1])
@@ -92,8 +101,9 @@ def report_prof(prof_name):
         interval = Interval(call)
         scanlist.append(interval)
         #print(f'len(scanlist): {len(scanlist)}')
+    prof.trace = []
     scanlist.finalize()
-    names = ScanList.toplevel.keys()
+    names = scanlist.toplevel.keys()
     all_cpu_time = 0.0
     all_gpu_time = 0.0
     longest_func_name = 0
@@ -101,7 +111,7 @@ def report_prof(prof_name):
         if len(name) > longest_func_name:
             longest_func_name = len(name)
 
-    for func_name, func_stat in sorted(list(ScanList.toplevel.items()), key=lambda x: x[1].duration):
+    for func_name, func_stat in sorted(list(scanlist.toplevel.items()), key=lambda x: x[1].duration):
         print(f'{func_name:{longest_func_name}}: total CPU time {func_stat.duration:.2f}us, #calls: {func_stat.num_calls}, time/call:{func_stat.duration/func_stat.num_calls:.2f}us')
         pyfile.write(f'("{func_name}",{{"time":{func_stat.duration},"calls":{func_stat.num_calls} }}),')
         all_cpu_time += func_stat.duration
@@ -110,8 +120,10 @@ def report_prof(prof_name):
     print()
     pyfile.write("]")
     pyfile.close()
+    #scanlist.toplevel = {}
 
 
 for trace_file in trace_files:
+    print(f"report_prof({trace_file})")
     report_prof(trace_file)
 
