@@ -1,0 +1,1 @@
+profile=[("lstm_cell",{"time":42274.098,"calls":1 }),]
