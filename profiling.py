@@ -2,6 +2,7 @@
 #TODO: should probably run the profiles here as well
 import importlib
 import sys
+from collections import deque
 sys.setrecursionlimit(8000)
 trace_files = [#'prof_child_fwd_trace',
                'prof_child_bp_trace',
@@ -16,6 +17,7 @@ trace_files = [#'prof_child_fwd_trace',
 
 #based on chrome trace format
 # {"name": "unsigned short", "ph": "X", "ts": 86.114, "dur": 13.083999999999989, 
+
 #  "tid": 0, "pid": "CPU functions", "args": {}}
 class Interval(object):
     def __init__(self, trace_dict):
@@ -98,13 +100,13 @@ class IntervalNode(object):
             #self.indent_level += 1
             if not self.contained_node:
                 self.contained_node = IntervalNode(interval, self.indent_level+1)
-                if interval.name in self.contained_calls:
-                    self.contained_calls[interval.name].add(interval.dur)
-                else:
-                    self.contained_calls[interval.name] = FuncStat(interval.name,
-                                                                   interval.dur,
-                                                                   self.indent_level+1,
-                                                                   self.contained_node)
+                #if interval.name in self.contained_calls:
+                #    self.contained_calls[interval.name].add(interval.dur)
+                #else:
+                #    self.contained_calls[interval.name] = FuncStat(interval.name,
+                #                                                   interval.dur,
+                #                                                   self.indent_level+1,
+                #                                                   self.contained_node)
             else:
                 self.contained_node.add_interval(interval)
         else:
@@ -114,6 +116,17 @@ class IntervalNode(object):
             else:
                 self.next_node = IntervalNode(interval, self.indent_level)
 
+    def summarize(self,log=False):
+        cur_node = self
+        while(cur_node):
+            #print(f"   >>> cur_node is: {cur_node}")
+            #print(f'{cur_node.interval.name} contains {cur_node.contained_nodes}')
+            if cur_node.interval.name in self.contained_calls:
+                self.contained_calls[cur_node.interval.name].add(cur_node.interval.dur)
+            else:
+                self.contained_calls[cur_node.interval.name] = FuncStat(cur_node.interval.name, cur_node.interval.dur,cur_node.indent_level,self.contained_node)
+            cur_node = cur_node.next_node
+        return self.contained_calls
 
     def __str__(self):
         return "   "*self.indent_level + str(self.interval.name)
@@ -165,7 +178,7 @@ class IntervalTree(object):
         if not node:
             node = self.root
         cur_node = node
-        while(cur_node):
+        while cur_node:
             print(cur_node)
             cur_node.print_contained()
             cur_node = cur_node.next_node
@@ -180,23 +193,18 @@ class IntervalTree(object):
                 curr_contained_node = curr_contained_node.next_node
             curr_node = curr_node.next_node
 
-#    def walk_levels(self):
-#        self.summarize()
-#        for name, func_stat in self.toplevel.items():
-#            print(func_stat)
-#            if func_stat.node:
-#                print(func_stat.node)
-
-
-def walk_levels(calls_dict):
+def walk_levels(calls_dict,func_to_stop=""):
     """must be called after tree is summarized"""
     for name, func_stat in calls_dict.items():
+        if name == func_to_stop:
+            print(f">>> {func_to_stop}")
+            print(f"    >>> {func_to_stop}.node: {func_stat.node}")
+            print(f"    >>> contained_calls: {func_stat.node.contained_calls}")
         print(f'{func_stat}')
         if func_stat.node:
+            func_stat.node.summarize()
             walk_levels(func_stat.node.contained_calls)
          
-
-
 class ScanList(list):
     def __init__(self):
         self.toplevel = {}
@@ -292,15 +300,15 @@ def print_prof(tree):
 toplevel_calls = []
 #tree = None
 for trace_file in trace_files:
-    print(f"report_prof({trace_file})")
+    print(f"----- report_prof({trace_file}) ------")
 #    report_prof(trace_file)
     tree = build_call_tree(trace_file)
-    print("tree.print_tree(tree.root)")
+    print("------  tree.print_tree(tree.root) -----")
     tree.print_tree(tree.root)
     #toplevel_calls.append(tree.summarize())
     tree.summarize()
     print("-"*80)
-    print("tree.print_level()") 
+    print("------ tree.print_level() ------ ") 
     print("-"*80)
     tree.print_level()
     print("-"*80)
@@ -308,9 +316,9 @@ for trace_file in trace_files:
     print("----> iterate ")
     for node in tree.root:
         print(node)
-    print("-----> tree.walk_levels() <-----")
+    print("-----> walk_levels() <-----")
     #tree.walk_levels()
-    walk_levels(tree.toplevel)
+    walk_levels(tree.toplevel,"matmul")
 
 print("="*80)
 for call in toplevel_calls:
@@ -320,22 +328,4 @@ for call in toplevel_calls:
     print("*"*80)
 
 print("="*80)
-
-#def summarize(node):
-#    # gather toplevel funcs:
-#    cur_node = node
-#    while(cur_node):
-#        #self.toplevel[cur_node.interval.name]=cur_node.interval
-#        #print(f'{cur_node.interval.name} contains {cur_node.contained_nodes}')
-#        if cur_node.interval.name in self.toplevel:
-#            self.toplevel[cur_node.interval.name].add(cur_node.interval.dur)
-#        else:
-#            self.toplevel[cur_node.interval.name] = FuncStat(cur_node.interval.name, cur_node.interval.dur,cur_node.indent_level)
-#        if(cur_node.contained_node):
-#            cur_contained = cur_node.contained_node
-#            while(cur_contained):
-#                #TODO
-#                cur_contained = cur_contained.next_node
-#        cur_node = cur_node.next_node
-#    return self.toplevel
 
