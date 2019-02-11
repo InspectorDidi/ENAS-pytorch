@@ -57,6 +57,9 @@ class FuncStat(object):
         self.duration += duration
         self.num_calls += 1
 
+    def __str__(self):
+        return f'{"  "*self.level}{self.name}: {self.num_calls} : {self.duration}'
+
 class IntervalNode(object):
     def __init__(self,interval,indent=0):
         self.interval = interval
@@ -98,8 +101,10 @@ class IntervalNode(object):
                 if interval.name in self.contained_calls:
                     self.contained_calls[interval.name].add(interval.dur)
                 else:
-                    self.contained_calls[interval.name] = FuncStat(interval.name, interval.dur,
-                                                           self.indent_level+1,self.contained_node)
+                    self.contained_calls[interval.name] = FuncStat(interval.name,
+                                                                   interval.dur,
+                                                                   self.indent_level+1,
+                                                                   self.contained_node)
             else:
                 self.contained_node.add_interval(interval)
         else:
@@ -151,7 +156,8 @@ class IntervalTree(object):
             if cur_node.interval.name in self.toplevel:
                 self.toplevel[cur_node.interval.name].add(cur_node.interval.dur)
             else:
-                self.toplevel[cur_node.interval.name] = FuncStat(cur_node.interval.name, cur_node.interval.dur,cur_node.indent_level)
+                self.toplevel[cur_node.interval.name] = FuncStat(cur_node.interval.name, cur_node.interval.dur,cur_node.indent_level,cur_node.contained_node)
+                print(f'{"  "*cur_node.indent_level} Current: {cur_node} Adding: {cur_node.contained_node}')
             cur_node = cur_node.next_node
         return self.toplevel
         
@@ -173,6 +179,23 @@ class IntervalTree(object):
                 self.print_tree(curr_contained_node)
                 curr_contained_node = curr_contained_node.next_node
             curr_node = curr_node.next_node
+
+#    def walk_levels(self):
+#        self.summarize()
+#        for name, func_stat in self.toplevel.items():
+#            print(func_stat)
+#            if func_stat.node:
+#                print(func_stat.node)
+
+
+def walk_levels(calls_dict):
+    """must be called after tree is summarized"""
+    for name, func_stat in calls_dict.items():
+        print(f'{func_stat}')
+        if func_stat.node:
+            walk_levels(func_stat.node.contained_calls)
+         
+
 
 class ScanList(list):
     def __init__(self):
@@ -275,6 +298,7 @@ for trace_file in trace_files:
     print("tree.print_tree(tree.root)")
     tree.print_tree(tree.root)
     #toplevel_calls.append(tree.summarize())
+    tree.summarize()
     print("-"*80)
     print("tree.print_level()") 
     print("-"*80)
@@ -284,6 +308,9 @@ for trace_file in trace_files:
     print("----> iterate ")
     for node in tree.root:
         print(node)
+    print("-----> tree.walk_levels() <-----")
+    #tree.walk_levels()
+    walk_levels(tree.toplevel)
 
 print("="*80)
 for call in toplevel_calls:
@@ -294,21 +321,21 @@ for call in toplevel_calls:
 
 print("="*80)
 
-def summarize(node):
-    # gather toplevel funcs:
-    cur_node = node
-    while(cur_node):
-        #self.toplevel[cur_node.interval.name]=cur_node.interval
-        #print(f'{cur_node.interval.name} contains {cur_node.contained_nodes}')
-        if cur_node.interval.name in self.toplevel:
-            self.toplevel[cur_node.interval.name].add(cur_node.interval.dur)
-        else:
-            self.toplevel[cur_node.interval.name] = FuncStat(cur_node.interval.name, cur_node.interval.dur,cur_node.indent_level)
-        if(cur_node.contained_node):
-            cur_contained = cur_node.contained_node
-            while(cur_contained):
-                #TODO
-                cur_contained = cur_contained.next_node
-        cur_node = cur_node.next_node
-    return self.toplevel
+#def summarize(node):
+#    # gather toplevel funcs:
+#    cur_node = node
+#    while(cur_node):
+#        #self.toplevel[cur_node.interval.name]=cur_node.interval
+#        #print(f'{cur_node.interval.name} contains {cur_node.contained_nodes}')
+#        if cur_node.interval.name in self.toplevel:
+#            self.toplevel[cur_node.interval.name].add(cur_node.interval.dur)
+#        else:
+#            self.toplevel[cur_node.interval.name] = FuncStat(cur_node.interval.name, cur_node.interval.dur,cur_node.indent_level)
+#        if(cur_node.contained_node):
+#            cur_contained = cur_node.contained_node
+#            while(cur_contained):
+#                #TODO
+#                cur_contained = cur_contained.next_node
+#        cur_node = cur_node.next_node
+#    return self.toplevel
 
