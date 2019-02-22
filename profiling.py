@@ -2,14 +2,22 @@
 #TODO: should probably run the profiles here as well
 import importlib
 import sys
-trace_files = ['prof_child_fwd_trace',
+trace_files = ['prof_shared_fwd_trace',
                'prof_child_bp_trace',
-               'prof_ctlr_fwd_trace',
-               'prof_ctlr_bp_trace',
+               'prof_ctrl_fwd_trace',
+               'prof_ctrl_bp_trace',
                'prof_sample_trace',
                'prof_get_loss_trace',
                'prof_get_reward_trace'
               ]
+
+#process *.trace files to create *_trace.py files:
+for tf in trace_files:
+    tf_pre = tf.replace("_trace",".trace")
+    with open(tf_pre, 'r') as tracefile:
+        string = tracefile.read()
+    with open(tf+".py",'w') as py_outfile:
+        py_outfile.write("trace="+string)
 
 #prof = importlib.import_module(sys.argv[1])
 

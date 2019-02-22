@@ -8,13 +8,13 @@ def tex_table(profile, table_name, fo=sys.stdout):
 
     prt('\\begin{table}[tb]')
     prt('\\centering')
-    prt('\\small')
+    prt('\\footnotesize')
     prt(f'\\caption{{{table_name}}} \\label{{tbl:{"".join(table_name.split(" "))}}}')
     prt('\\centering')
     prt(' \\begin{threeparttable}[]')
-    prt(' \\begin{tabular}{r r r r r r}')
+    prt(' \\begin{tabular}{l r r r r r}')
     prt(' \\toprule')
-    prt(' Function & Total Time (usec) & Calls \\\\')
+    prt(' Function & Total Time ($\\mu$sec) & Calls \\\\')
     prt(' \\midrule')
     for func_time in profile:
         func_name = func_time[0].replace('_','\\_')

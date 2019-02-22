@@ -72,7 +72,6 @@ def report_phases():
         report_phase(lists['times_per_epoch'], phase)
     logger.info(f'{">"*30}>>=<<{"<"*30}')
 
-
 class Timer(ContextDecorator):
     def __init__(self, lst):
         self.list = lst

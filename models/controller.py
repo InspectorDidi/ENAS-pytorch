@@ -159,7 +159,7 @@ class Controller(torch.nn.Module):
                 print("-"*64)
                 print("Profile Controller Forward LSTM eval: ---------------------------")
                 print(prof)
-                prof.export_chrome_trace("prof_ctlr_fwd.trace")
+                prof.export_chrome_trace("prof_ctrl_fwd.trace")
                 print("-"*64)
                 self.run_fwd_once = True
             else:
